@@ -130,7 +130,7 @@ class TopologyPruner:
                         if prev_scores is not None and pos_idx < len(prev_scores)
                         else 0.0
                     )
-                    edge_score = (prev_score_val + score_val) / 2.0
+                    edge_score = min(prev_score_val, float(score_val))
                     if edge_score >= self.threshold:
                         edges.append(
                             {
@@ -223,7 +223,11 @@ class TopologyPruner:
                     return int(parts[i + 1])
                 except ValueError:
                     pass
-        return -1  # Input embedding or final layer
+        if "embed" in hook_name:
+            return -1
+        if "ln_final" in hook_name:
+            return 10**6
+        return -1
 
     @staticmethod
     def _extract_component(hook_name: str) -> str:

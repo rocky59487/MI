@@ -63,10 +63,10 @@ def _get_default_rules(model_name: str) -> List[str]:
 
 def _make_ln_backward_hook() -> Callable:
     """
-    Returns a backward hook that applies LN-rule to LayerNorm gradient.
+    Returns a backward hook that sanitizes LayerNorm gradients for numeric stability.
 
-    The hook intercepts the gradient tensor flowing backward through a
-    LayerNorm hook point and replaces it with the LN-rule propagated value.
+    The hook preserves gradient direction and only removes NaN/Inf values.
+    This is a stability guard, not a full LN-rule reparameterization.
     """
     def hook_fn(grad: torch.Tensor) -> torch.Tensor:
         # We cannot recover LayerNorm forward statistics at this hook point.

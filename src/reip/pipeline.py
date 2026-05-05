@@ -168,63 +168,80 @@ class ReIPPipeline:
             print(f"[ReIPPipeline] Target token ID: {target_token_id}")
 
         # ------------------------------------------------------------------
-        # Step 2: Forward pass — clean input (with activation caching)
+        # Step 2: Forward pass with hooks active (clean + corrupted)
         # ------------------------------------------------------------------
-        with torch.no_grad():
-            corrupted_logits, _ = self.model.run_with_cache(
-                corrupted_tokens,
-                return_type="logits",
-                names_filter=lambda name: "hook_" in name,
-            )
-
-        # Enable gradients for clean forward pass (needed for backward)
         self.model.zero_grad()
-        clean_logits, clean_cache = self.model.run_with_cache(
-            clean_tokens,
-            return_type="logits",
-            names_filter=lambda name: "hook_" in name,
-            prepend_bos=False,
-        )
-
-        if self.config.verbose:
-            print(f"[ReIPPipeline] Forward passes complete. "
-                  f"Clean logits shape: {clean_logits.shape}")
 
         # ------------------------------------------------------------------
         # Step 3: Compute loss and run LRP backward pass
         # ------------------------------------------------------------------
         relevance_scores: Dict[str, torch.Tensor] = {}
+        clean_relevance_scores: Dict[str, torch.Tensor] = {}
+        corrupted_relevance_scores: Dict[str, torch.Tensor] = {}
 
         with self.hook_manager.active():
-            # Register gradient hooks on cached activations to capture relevance
+            clean_logits, clean_cache = self.model.run_with_cache(
+                clean_tokens,
+                return_type="logits",
+                names_filter=lambda name: "hook_" in name,
+                prepend_bos=False,
+            )
+            corrupted_logits, corrupted_cache = self.model.run_with_cache(
+                corrupted_tokens,
+                return_type="logits",
+                names_filter=lambda name: "hook_" in name,
+                prepend_bos=False,
+            )
+
+            if self.config.verbose:
+                print(f"[ReIPPipeline] Forward passes complete. Clean logits shape: {clean_logits.shape}")
+
             for hook_name, activation in clean_cache.items():
                 if activation.requires_grad:
                     def make_capture_hook(name):
                         def capture_hook(grad):
-                            relevance_scores[name] = grad.detach().clone()
+                            clean_relevance_scores[name] = grad.detach().clone()
                         return capture_hook
                     activation.register_hook(make_capture_hook(hook_name))
 
-            # Compute scalar objective.
-            # ReIP needs a causal contrastive signal, so we optimize the clean-vs-
-            # corrupted gap rather than clean logits alone.
+            for hook_name, activation in corrupted_cache.items():
+                if activation.requires_grad:
+                    def make_capture_hook(name):
+                        def capture_hook(grad):
+                            corrupted_relevance_scores[name] = grad.detach().clone()
+                        return capture_hook
+                    activation.register_hook(make_capture_hook(hook_name))
+
             pos_idx = self.config.target_token_idx
+            if pos_idx < 0:
+                pos_idx = clean_logits.shape[1] + pos_idx
+            if pos_idx < 0 or pos_idx >= clean_logits.shape[1]:
+                raise IndexError(
+                    f"target_token_idx {self.config.target_token_idx} out of range for sequence length {clean_logits.shape[1]}."
+                )
             if target_token_id is not None:
+                vocab_size = clean_logits.shape[-1]
+                if target_token_id < 0 or target_token_id >= vocab_size:
+                    raise IndexError(
+                        f"target_token_id {target_token_id} out of range for vocabulary size {vocab_size}."
+                    )
                 clean_log_probs = torch.log_softmax(clean_logits[0, pos_idx], dim=-1)
-                corrupted_log_probs = torch.log_softmax(
-                    corrupted_logits[0, pos_idx], dim=-1
-                )
-                contrastive_score = (
-                    clean_log_probs[target_token_id]
-                    - corrupted_log_probs[target_token_id]
-                )
-                loss = -contrastive_score
+                corrupted_log_probs = torch.log_softmax(corrupted_logits[0, pos_idx], dim=-1)
+                loss = -(clean_log_probs[target_token_id] - corrupted_log_probs[target_token_id])
             else:
-                # Fallback: maximize the most probable token
                 loss = -clean_logits[0, pos_idx].max()
 
             loss.backward()
 
+        for name in set(clean_relevance_scores.keys()) | set(corrupted_relevance_scores.keys()):
+            clean_grad = clean_relevance_scores.get(name)
+            corr_grad = corrupted_relevance_scores.get(name)
+            if clean_grad is None:
+                relevance_scores[name] = -corr_grad
+            elif corr_grad is None:
+                relevance_scores[name] = clean_grad
+            else:
+                relevance_scores[name] = clean_grad - corr_grad
         if self.config.verbose:
             print(f"[ReIPPipeline] Backward pass complete. "
                   f"Captured {len(relevance_scores)} relevance tensors.")
