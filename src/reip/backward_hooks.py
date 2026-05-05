@@ -61,9 +61,7 @@ def _get_default_rules(model_name: str) -> List[str]:
 # Hook functions injected into TransformerLens backward pass
 # ---------------------------------------------------------------------------
 
-def _make_ln_backward_hook(
-    ln_rule: LNRule,
-) -> Callable:
+def _make_ln_backward_hook() -> Callable:
     """
     Returns a backward hook that applies LN-rule to LayerNorm gradient.
 
@@ -71,11 +69,10 @@ def _make_ln_backward_hook(
     LayerNorm hook point and replaces it with the LN-rule propagated value.
     """
     def hook_fn(grad: torch.Tensor) -> torch.Tensor:
-        # The grad here is dL/d(ln_output); we re-route through LN-rule
-        # by using the stored normalization statistics as constants.
-        # Since we cannot re-run forward here, we apply a simplified
-        # constant-scaling approximation consistent with LN-rule.
-        return grad  # Actual re-routing handled in pipeline via patched module
+        # We cannot recover LayerNorm forward statistics at this hook point.
+        # Keep directionality intact and only sanitize numerical pathologies
+        # to avoid injecting arbitrary rescaling into relevance attribution.
+        return torch.nan_to_num(grad, nan=0.0, posinf=0.0, neginf=0.0)
     return hook_fn
 
 
@@ -131,6 +128,7 @@ class ReIPHookManager:
         rules: Optional[List[str]] = None,
         model_name: Optional[str] = None,
         verbose: bool = False,
+        strict: bool = False,
     ):
         """
         Args:
@@ -141,6 +139,7 @@ class ReIPHookManager:
         """
         self.model = model
         self.verbose = verbose
+        self.strict = strict
         self._hook_handles: List[Any] = []
         self._grad_stores: Dict[str, torch.Tensor] = {}
 
@@ -193,7 +192,7 @@ class ReIPHookManager:
         """Register LN-rule backward hooks on all LayerNorm hook points."""
         for hook_name in self._get_ln_hook_names():
             try:
-                hook_fn = _make_ln_backward_hook(None)
+                hook_fn = _make_ln_backward_hook()
                 handle = self.model.add_hook(
                     hook_name,
                     hook_fn,
@@ -203,8 +202,9 @@ class ReIPHookManager:
                 self._hook_handles.append(handle)
                 if self.verbose:
                     print(f"[ReIPHookManager] Registered LN-rule hook: {hook_name}")
-            except Exception:
-                pass  # Hook point may not exist in all architectures
+            except Exception as exc:
+                if self.strict:
+                    raise RuntimeError(f"Failed to register LN hook: {hook_name}") from exc
 
     def _register_identity_hooks(self) -> None:
         """Register Identity-rule backward hooks on MLP activation hook points."""
@@ -218,8 +218,9 @@ class ReIPHookManager:
                     is_permanent=False,
                 )
                 self._hook_handles.append(handle)
-            except Exception:
-                pass
+            except Exception as exc:
+                if self.strict:
+                    raise RuntimeError(f"Failed to register identity hook: {hook_name}") from exc
 
     def _register_ah_hooks(self) -> None:
         """Register AH-rule backward hooks on attention pattern hook points."""
@@ -236,8 +237,9 @@ class ReIPHookManager:
                     is_permanent=False,
                 )
                 self._hook_handles.append(handle)
-            except Exception:
-                pass
+            except Exception as exc:
+                if self.strict:
+                    raise RuntimeError(f"Failed to register AH hook: {hook_name}") from exc
 
     def _register_half_hooks(self) -> None:
         """Register Half-rule backward hooks on gated MLP hook points."""
@@ -251,8 +253,9 @@ class ReIPHookManager:
                     is_permanent=False,
                 )
                 self._hook_handles.append(handle)
-            except Exception:
-                pass
+            except Exception as exc:
+                if self.strict:
+                    raise RuntimeError(f"Failed to register half hook: {hook_name}") from exc
 
     def register_all_hooks(self) -> None:
         """Register all LRP backward hooks according to the configured rule set."""

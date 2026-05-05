@@ -151,6 +151,11 @@ class ReIPPipeline:
         # ------------------------------------------------------------------
         clean_tokens = self.model.to_tokens(clean_prompt).to(device)
         corrupted_tokens = self.model.to_tokens(corrupted_prompt).to(device)
+        if clean_tokens.shape != corrupted_tokens.shape:
+            raise ValueError(
+                "clean_prompt and corrupted_prompt must produce identical token shapes. "
+                f"Got {tuple(clean_tokens.shape)} vs {tuple(corrupted_tokens.shape)}."
+            )
 
         # Resolve target token ID
         if target_token_id is None and target_token is not None:
@@ -200,11 +205,20 @@ class ReIPPipeline:
                         return capture_hook
                     activation.register_hook(make_capture_hook(hook_name))
 
-            # Compute scalar loss: log-probability of target token at last position
+            # Compute scalar objective.
+            # ReIP needs a causal contrastive signal, so we optimize the clean-vs-
+            # corrupted gap rather than clean logits alone.
             pos_idx = self.config.target_token_idx
             if target_token_id is not None:
-                log_probs = torch.log_softmax(clean_logits[0, pos_idx], dim=-1)
-                loss = -log_probs[target_token_id]
+                clean_log_probs = torch.log_softmax(clean_logits[0, pos_idx], dim=-1)
+                corrupted_log_probs = torch.log_softmax(
+                    corrupted_logits[0, pos_idx], dim=-1
+                )
+                contrastive_score = (
+                    clean_log_probs[target_token_id]
+                    - corrupted_log_probs[target_token_id]
+                )
+                loss = -contrastive_score
             else:
                 # Fallback: maximize the most probable token
                 loss = -clean_logits[0, pos_idx].max()
@@ -252,6 +266,11 @@ class ReIPPipeline:
                 "clean_prompt": clean_prompt,
                 "corrupted_prompt": corrupted_prompt,
                 "target_token_id": target_token_id,
+                "objective": (
+                    "negative_clean_corrupted_logprob_gap"
+                    if target_token_id is not None
+                    else "negative_clean_max_logit"
+                ),
                 "lrp_rules": self.hook_manager.rules,
                 "pruning_threshold": self.config.pruning_threshold,
             },
