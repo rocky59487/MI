@@ -1,0 +1,29 @@
+# RTX 4090 Hardware Configuration
+# Ada Lovelace Architecture: 24GB GDDR6X, 72MB L2 Cache, 1008 GB/s bandwidth
+
+gpu:
+  name: "NVIDIA RTX 4090"
+  vram_gb: 24
+  l2_cache_mb: 72
+  bandwidth_gb_s: 1008
+  cuda_cores: 16384
+  fp32_tflops: 82.6
+
+# Tiling strategy to maximize L2 cache utilization
+tiling:
+  attention_tile_size: 512       # Keep attention weight tiles within L2 cache
+  feature_tile_size: 256         # Transcoder feature vector tile size
+  batch_size_default: 1          # Default batch size for single-sample analysis
+  max_seq_len: 512               # Maximum sequence length for activation caching
+
+# Memory management
+memory:
+  activation_cache_gb: 4.0       # Reserved VRAM for activation cache
+  gradient_buffer_gb: 2.0        # Reserved VRAM for LRP gradient computation
+  transcoder_cache_gb: 6.0       # Reserved VRAM for transcoder weight slices
+  system_overhead_gb: 1.0        # OS and CUDA runtime overhead
+
+# Hook management
+hooks:
+  reset_hooks_end: true          # Auto-cleanup hooks after each forward pass
+  clear_contexts: true           # Clear context managers to prevent VRAM leaks
