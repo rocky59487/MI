@@ -30,5 +30,5 @@ def test_reip_real_model_smoke():
 
     assert isinstance(result.relevance_scores, dict)
     assert len(result.relevance_scores) > 0
-    assert result.metadata["objective"] == "negative_clean_corrupted_logprob_gap"
+    assert result.metadata["objective"] == "negative_logprob_gap_with_activation_delta"
     assert result.clean_logits.shape == result.corrupted_logits.shape

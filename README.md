@@ -12,7 +12,7 @@
 
 | 模組 | 功能 | 計算複雜度 |
 |------|------|-----------|
-| **ReIP** | LRP 反向傳播迴路定位，PCC > 0.95 vs 激勵修補 | O(2F + B) |
+| **ReIP** | LRP/梯度-激活差分原型（planned validation benchmark: PCC vs activation patching） | O(2F + B) |
 | **WeightLens** | 無資料集、無外部 LLM 的靜態特徵語意提取 | O(V × d) |
 | **CircuitLens** | Jacobian + DBSCAN 多義性特徵分解 | O(N²) |
 | **Dashboard** | Cytoscape DAG 視覺化，因果分數 → 邊緣粗細/顏色 | — |
@@ -227,7 +227,7 @@ pytest tests/ --cov=src --cov-report=html
 
 | 指標 | 目標值 | 對比基準 |
 |------|--------|---------|
-| ReIP PCC（IOI 任務） | > 0.95 | AtP: ~0.006 |
+| ReIP PCC（IOI 任務） | Planned benchmark (not yet claimed) | AtP baseline pending |
 | FADE 純度（Purity） | > 0.80 | MaxAct + GPT-4 |
 | FADE 清晰度（Clarity） | > 0.70 | MaxAct + GPT-4 |
 | FADE 響應度（Responsiveness） | > 0.75 | MaxAct + GPT-4 |

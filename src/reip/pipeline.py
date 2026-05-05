@@ -236,12 +236,17 @@ class ReIPPipeline:
         for name in set(clean_relevance_scores.keys()) | set(corrupted_relevance_scores.keys()):
             clean_grad = clean_relevance_scores.get(name)
             corr_grad = corrupted_relevance_scores.get(name)
-            if clean_grad is None:
-                relevance_scores[name] = -corr_grad
-            elif corr_grad is None:
-                relevance_scores[name] = clean_grad
-            else:
-                relevance_scores[name] = clean_grad - corr_grad
+            if clean_grad is None or corr_grad is None:
+                continue
+
+            clean_act = clean_cache.get(name)
+            corr_act = corrupted_cache.get(name)
+            if clean_act is None or corr_act is None:
+                continue
+
+            grad_delta = clean_grad - corr_grad
+            act_delta = (clean_act.detach() - corr_act.detach())
+            relevance_scores[name] = grad_delta * act_delta
         if self.config.verbose:
             print(f"[ReIPPipeline] Backward pass complete. "
                   f"Captured {len(relevance_scores)} relevance tensors.")
@@ -284,7 +289,7 @@ class ReIPPipeline:
                 "corrupted_prompt": corrupted_prompt,
                 "target_token_id": target_token_id,
                 "objective": (
-                    "negative_clean_corrupted_logprob_gap"
+                    "negative_logprob_gap_with_activation_delta"
                     if target_token_id is not None
                     else "negative_clean_max_logit"
                 ),
