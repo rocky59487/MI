@@ -170,7 +170,7 @@ def compute_reip_scores(
     target_token_idx: int,
     target_token_id: int,
     hook_points: List[str],
-    scoring_formula: str = "grad_delta_x_act_delta",
+    scoring_formula: str = "corr_grad_x_act_delta",
 ) -> Tuple[np.ndarray, float]:
     """
     Compute ReIP attribution scores using the specified scoring formula.
@@ -269,7 +269,7 @@ def run_fidelity_benchmark(
     clean_prompt: str,
     corrupted_prompt: str,
     target_token: str,
-    scoring_formula: str = "grad_delta_x_act_delta",
+    scoring_formula: str = "corr_grad_x_act_delta",
     model_name: str = "unknown",
     task_name: str = "IOI",
 ) -> FidelityResult:
