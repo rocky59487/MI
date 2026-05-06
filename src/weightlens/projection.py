@@ -167,11 +167,11 @@ class VocabProjector:
         return FeatureSemantics(
             feature_idx=feature_idx,
             layer_idx=layer_idx,
-            input_tokens=[t for t, _ in input_tokens],
-            input_zscores=[z for _, z in input_tokens],
+            input_tokens=input_tokens,
+            input_zscores=input_zscores,
             output_tokens_promoted=[t for t, _ in promoted],
             output_tokens_suppressed=[t for t, _ in suppressed],
-            output_zscores=[z for _, z in output_tokens_all],
+            output_zscores=output_zscores_all,
         )
 
     @torch.no_grad()

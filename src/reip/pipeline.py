@@ -178,41 +178,52 @@ class ReIPPipeline:
         # Step 3: Compute loss and run LRP backward pass
         # ------------------------------------------------------------------
         relevance_scores: Dict[str, torch.Tensor] = {}
-        clean_relevance_scores: Dict[str, torch.Tensor] = {}
-        corrupted_relevance_scores: Dict[str, torch.Tensor] = {}
+        captured_clean: Dict[str, torch.Tensor] = {}
+        captured_corrupted: Dict[str, torch.Tensor] = {}
+
+        # Determine which hook points to capture for gradient computation.
+        # We capture mlp_out and attn_out at each layer as these represent
+        # the primary computational components for circuit analysis.
+        n_layers = self.model.cfg.n_layers
+        hook_points = []
+        for i in range(n_layers):
+            hook_points.append(f"blocks.{i}.hook_mlp_out")
+            hook_points.append(f"blocks.{i}.hook_attn_out")
+
+        def _make_retain_grad_hook(store: Dict[str, torch.Tensor], name: str):
+            """Create a forward hook that enables gradient tracking."""
+            def hook_fn(activation, hook):
+                activation.requires_grad_(True)
+                activation.retain_grad()
+                store[name] = activation
+                return activation
+            return hook_fn
 
         with self.hook_manager.active():
-            clean_logits, clean_cache = self.model.run_with_cache(
+            # Forward pass for clean input with gradient-capturing hooks
+            fwd_hooks_clean = [
+                (hp, _make_retain_grad_hook(captured_clean, hp))
+                for hp in hook_points
+            ]
+            clean_logits = self.model.run_with_hooks(
                 clean_tokens,
                 return_type="logits",
-                names_filter=lambda name: "hook_" in name,
-                prepend_bos=False,
+                fwd_hooks=fwd_hooks_clean,
             )
-            corrupted_logits, corrupted_cache = self.model.run_with_cache(
+
+            # Forward pass for corrupted input with gradient-capturing hooks
+            fwd_hooks_corrupted = [
+                (hp, _make_retain_grad_hook(captured_corrupted, hp))
+                for hp in hook_points
+            ]
+            corrupted_logits = self.model.run_with_hooks(
                 corrupted_tokens,
                 return_type="logits",
-                names_filter=lambda name: "hook_" in name,
-                prepend_bos=False,
+                fwd_hooks=fwd_hooks_corrupted,
             )
 
             if self.config.verbose:
                 print(f"[ReIPPipeline] Forward passes complete. Clean logits shape: {clean_logits.shape}")
-
-            for hook_name, activation in clean_cache.items():
-                if activation.requires_grad:
-                    def make_capture_hook(name):
-                        def capture_hook(grad):
-                            clean_relevance_scores[name] = grad.detach().clone()
-                        return capture_hook
-                    activation.register_hook(make_capture_hook(hook_name))
-
-            for hook_name, activation in corrupted_cache.items():
-                if activation.requires_grad:
-                    def make_capture_hook(name):
-                        def capture_hook(grad):
-                            corrupted_relevance_scores[name] = grad.detach().clone()
-                        return capture_hook
-                    activation.register_hook(make_capture_hook(hook_name))
 
             pos_idx = self.config.target_token_idx
             if pos_idx < 0:
@@ -235,20 +246,20 @@ class ReIPPipeline:
 
             loss.backward()
 
-        for name in set(clean_relevance_scores.keys()) | set(corrupted_relevance_scores.keys()):
-            clean_grad = clean_relevance_scores.get(name)
-            corr_grad = corrupted_relevance_scores.get(name)
+        # Compute relevance scores as grad_delta * act_delta
+        for name in captured_clean.keys():
+            clean_act = captured_clean[name]
+            corr_act = captured_corrupted.get(name)
+            if corr_act is None:
+                continue
+            clean_grad = clean_act.grad
+            corr_grad = corr_act.grad
             if clean_grad is None or corr_grad is None:
                 continue
-
-            clean_act = clean_cache.get(name)
-            corr_act = corrupted_cache.get(name)
-            if clean_act is None or corr_act is None:
-                continue
-
             grad_delta = clean_grad - corr_grad
-            act_delta = (clean_act.detach() - corr_act.detach())
+            act_delta = clean_act.detach() - corr_act.detach()
             relevance_scores[name] = grad_delta * act_delta
+
         if self.config.verbose:
             print(f"[ReIPPipeline] Backward pass complete. "
                   f"Captured {len(relevance_scores)} relevance tensors.")
@@ -268,7 +279,7 @@ class ReIPPipeline:
             self.model.reset_hooks(including_permanent=False)
 
         # Free intermediate tensors
-        del clean_cache
+        del captured_clean, captured_corrupted
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         gc.collect()

@@ -74,10 +74,10 @@ class TestVocabProjector(unittest.TestCase):
     def test_zscore_filter_returns_sorted_by_magnitude(self):
         """Z-score filter should return tokens sorted by |z-score| descending."""
         logits = torch.randn(100)
-        results = self.projector._zscore_filter(logits, threshold=0.5, top_k=10)
+        token_strings, zscore_values = self.projector._zscore_filter(logits, threshold=0.5, top_k=10)
 
-        if len(results) >= 2:
-            zscores = [abs(z) for _, z in results]
+        if len(zscore_values) >= 2:
+            zscores = [abs(z) for z in zscore_values]
             self.assertEqual(zscores, sorted(zscores, reverse=True))
 
     def test_cross_layer_connections_shape(self):

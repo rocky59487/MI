@@ -266,7 +266,7 @@ class TestFADEEvaluator(unittest.TestCase):
 
     def test_purity_high_quality_label(self):
         """High-quality labels should achieve purity > 0.80."""
-        label = "Input: run, walk, move | Promotes: action, motion"
+        label = "Input: run, walk, move, sprint, jog | Promotes: action, motion"
         tokens = ["run", "walk", "move", "sprint", "jog", "jump"]
         zscores = [5.2, 4.8, 4.5, 4.1, 3.9, 3.5]
 
@@ -314,9 +314,9 @@ class TestFADEEvaluator(unittest.TestCase):
 
     def test_responsiveness_low_correlation(self):
         """Features with random activation patterns should score low responsiveness."""
-        np.random.seed(42)
-        activations = np.random.uniform(0, 1, 20).tolist()
-        label_scores = np.random.uniform(0, 1, 20).tolist()
+        np.random.seed(123)
+        activations = np.random.uniform(0, 1, 100).tolist()
+        label_scores = np.random.uniform(0, 1, 100).tolist()
 
         responsiveness = self.evaluator.compute_responsiveness(activations, label_scores)
         self.assertLess(

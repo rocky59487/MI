@@ -195,42 +195,51 @@ def compute_reip_scores(
     """
     start_time = time.time()
 
-    # Forward passes to get activations
-    _, clean_cache = model.run_with_cache(clean_tokens)
-    _, corrupted_cache = model.run_with_cache(corrupted_tokens)
+    # Use run_with_hooks + retain_grad to properly capture gradients
+    captured_clean = {}
+    captured_corrupted = {}
 
-    # Backward pass on clean to get gradients w.r.t. target logit
+    def _make_retain_hook(store, name):
+        def hook_fn(activation, hook):
+            activation.requires_grad_(True)
+            activation.retain_grad()
+            store[name] = activation
+            return activation
+        return hook_fn
+
+    # Clean forward pass with gradient-capturing hooks
+    fwd_hooks_clean = [(hp, _make_retain_hook(captured_clean, hp)) for hp in hook_points]
     model.zero_grad()
-    clean_logits = model(clean_tokens)
+    clean_logits = model.run_with_hooks(clean_tokens, return_type="logits", fwd_hooks=fwd_hooks_clean)
     target_logit_clean = clean_logits[0, target_token_idx, target_token_id]
-    target_logit_clean.backward(retain_graph=True)
+    target_logit_clean.backward()
 
     # Collect clean gradients
     clean_grads = {}
     for hook_name in hook_points:
-        if hook_name in clean_cache and clean_cache[hook_name].grad is not None:
-            clean_grads[hook_name] = clean_cache[hook_name].grad.clone()
+        if hook_name in captured_clean and captured_clean[hook_name].grad is not None:
+            clean_grads[hook_name] = captured_clean[hook_name].grad.clone()
 
-    # Backward pass on corrupted to get gradients
+    # Corrupted forward pass with gradient-capturing hooks
+    fwd_hooks_corrupted = [(hp, _make_retain_hook(captured_corrupted, hp)) for hp in hook_points]
     model.zero_grad()
-    corrupted_logits = model(corrupted_tokens)
+    corrupted_logits = model.run_with_hooks(corrupted_tokens, return_type="logits", fwd_hooks=fwd_hooks_corrupted)
     target_logit_corrupted = corrupted_logits[0, target_token_idx, target_token_id]
-    target_logit_corrupted.backward(retain_graph=True)
+    target_logit_corrupted.backward()
 
     corrupted_grads = {}
     for hook_name in hook_points:
-        if hook_name in corrupted_cache and corrupted_cache[hook_name].grad is not None:
-            corrupted_grads[hook_name] = corrupted_cache[hook_name].grad.clone()
+        if hook_name in captured_corrupted and captured_corrupted[hook_name].grad is not None:
+            corrupted_grads[hook_name] = captured_corrupted[hook_name].grad.clone()
 
     # Compute scores based on formula
     scores = np.zeros(len(hook_points))
 
     for i, hook_name in enumerate(hook_points):
-        if hook_name not in clean_cache or hook_name not in corrupted_cache:
+        if hook_name not in captured_clean or hook_name not in captured_corrupted:
             continue
-
-        act_clean = clean_cache[hook_name].detach()
-        act_corrupted = corrupted_cache[hook_name].detach()
+        act_clean = captured_clean[hook_name].detach()
+        act_corrupted = captured_corrupted[hook_name].detach()
         act_delta = act_clean - act_corrupted
 
         grad_clean = clean_grads.get(hook_name, torch.zeros_like(act_clean))

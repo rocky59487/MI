@@ -68,8 +68,8 @@ class ClusterResult:
             "n_clusters": self.n_clusters,
             "n_noise": self.n_noise,
             "cluster_labels": self.cluster_labels.tolist(),
-            "cluster_sample_indices": self.cluster_sample_indices,
-            "cluster_descriptions": self.cluster_descriptions,
+            "cluster_sample_indices": {int(k): v for k, v in self.cluster_sample_indices.items()},
+            "cluster_descriptions": {int(k): v for k, v in self.cluster_descriptions.items()},
             "composite_label": self.composite_label,
         }
 

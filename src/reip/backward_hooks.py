@@ -68,7 +68,7 @@ def _make_ln_backward_hook() -> Callable:
     The hook preserves gradient direction and only removes NaN/Inf values.
     This is a stability guard, not a full LN-rule reparameterization.
     """
-    def hook_fn(grad: torch.Tensor) -> torch.Tensor:
+    def hook_fn(grad: torch.Tensor, **kwargs) -> torch.Tensor:
         # We cannot recover LayerNorm forward statistics at this hook point.
         # Keep directionality intact and only sanitize numerical pathologies
         # to avoid injecting arbitrary rescaling into relevance attribution.
@@ -78,7 +78,7 @@ def _make_ln_backward_hook() -> Callable:
 
 def _make_identity_backward_hook() -> Callable:
     """Returns a backward hook that applies Identity-rule (passes grad unchanged)."""
-    def hook_fn(grad: torch.Tensor) -> torch.Tensor:
+    def hook_fn(grad: torch.Tensor, **kwargs) -> torch.Tensor:
         return grad  # Identity: derivative = 1
     return hook_fn
 
@@ -90,7 +90,7 @@ def _make_half_backward_hook(split_factor: float = 0.5) -> Callable:
     The gradient is scaled by split_factor (default 0.5) to enforce equal
     relevance distribution between the two branches of a gated MLP.
     """
-    def hook_fn(grad: torch.Tensor) -> torch.Tensor:
+    def hook_fn(grad: torch.Tensor, **kwargs) -> torch.Tensor:
         return grad * split_factor
     return hook_fn
 
@@ -228,7 +228,7 @@ class ReIPHookManager:
             try:
                 # AH-rule: treat attention weights as constants
                 # We zero out the gradient flowing through the pattern
-                def ah_hook(grad: torch.Tensor) -> torch.Tensor:
+                def ah_hook(grad: torch.Tensor, **kwargs) -> torch.Tensor:
                     return torch.zeros_like(grad)
                 handle = self.model.add_hook(
                     hook_name,
