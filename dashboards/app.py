@@ -4,17 +4,20 @@ MI Circuit Explorer — Directional Causal Flow Dashboard.
 Launch the interactive circuit visualization dashboard with:
     python dashboards/app.py
 
-The dashboard visualizes how a language model "thinks" by showing the
-directional causal flow from input through attention heads and MLPs to
-the final output prediction. Nodes appear sequentially like a typewriter
-effect, revealing the model's reasoning chain step by step.
+This is a PRODUCTION research tool. There is no demo mode or mock data.
+All analysis runs real model inference via the MI backend pipeline
+(ReIP + CircuitLens + WeightLens). A GPU is recommended for fast inference.
 
 Features:
     - Directional flow graph (left-to-right or top-to-bottom)
     - Top-N filtering (only show most important nodes by ReIP score)
     - Sequential reveal animation (nodes appear one-by-one)
     - Click-to-expand node details with causal interpretation
+    - Agent Safety Mode: identify dangerous decision nodes
     - Deep space + neural pulse visual theme
+
+Required dependencies:
+    pip install dash dash-cytoscape transformer-lens torch
 """
 
 from __future__ import annotations
@@ -84,7 +87,19 @@ def main():
 
     print(f"[MI Circuit Explorer] Starting server at http://{host}:{port}")
     print(f"[MI Circuit Explorer] Debug mode: {debug}")
-    print(f"[MI Circuit Explorer] Directional causal flow visualization")
+    print(f"[MI Circuit Explorer] Real inference mode — no demo/mock data")
+
+    # Check backend status on startup
+    try:
+        from dashboards.backend import get_backend_status
+        status = get_backend_status()
+        if status["ready"]:
+            print(f"[MI Circuit Explorer] Backend: READY ({status['device'].upper()})")
+        else:
+            print(f"[MI Circuit Explorer] Backend: NOT READY — {status['message']}")
+            print(f"[MI Circuit Explorer] Install missing deps before running analysis.")
+    except Exception as e:
+        print(f"[MI Circuit Explorer] Backend check failed: {e}")
 
     app = create_app(debug=debug)
     app.run(host=host, port=port, debug=debug)

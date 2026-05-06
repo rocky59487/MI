@@ -1,10 +1,13 @@
 """
 Dashboard Layout for MI Circuit Explorer — Directional Causal Flow.
 
-This module defines the Dash application layout for the redesigned Circuit
-Explorer. The visualization shows a directional flow graph (left-to-right)
-that reveals how the model "thinks" — tracing the causal path from input
-through attention heads, MLPs, and residual streams to the output prediction.
+This module defines the Dash application layout for the Circuit Explorer.
+The visualization shows a directional flow graph (left-to-right) that reveals
+how the model "thinks" — tracing the causal path from input through attention
+heads, MLPs, and residual streams to the output prediction.
+
+This is a PRODUCTION research tool. There is no demo mode or mock data.
+All analysis requires real model inference via the MI backend pipeline.
 
 Key design principles:
     - Directional flow: Input → Early layers → Mid layers → Late layers → Output
@@ -12,6 +15,7 @@ Key design principles:
     - Sequential reveal: Nodes appear one-by-one like a typewriter effect
     - Click-to-expand: Click any node to see sub-details and child connections
     - Deep space + neural pulse aesthetic
+    - Agent Safety Mode: Identify dangerous decision nodes with red highlighting
 """
 
 from __future__ import annotations
@@ -38,6 +42,7 @@ def topology_to_cytoscape_elements(
     semantic_labels: Optional[Dict[str, str]] = None,
     cluster_labels: Optional[Dict[str, str]] = None,
     top_n: int = 12,
+    safety_info: Optional[Dict] = None,
 ) -> List[Dict]:
     """
     Convert a ReIP topology graph to Cytoscape elements format.
@@ -50,6 +55,7 @@ def topology_to_cytoscape_elements(
         semantic_labels: Optional dict mapping node_id to semantic label.
         cluster_labels: Optional dict mapping node_id to cluster label.
         top_n: Maximum number of nodes to display (sorted by score).
+        safety_info: Optional safety analysis info for danger marking.
 
     Returns:
         List of Cytoscape element dicts.
@@ -68,6 +74,13 @@ def topology_to_cytoscape_elements(
         edges = topology.get("edges", [])
     else:
         return []
+
+    # Get dangerous node/edge sets if safety mode
+    dangerous_node_ids = set()
+    dangerous_edge_ids = set()
+    if safety_info:
+        dangerous_node_ids = set(safety_info.get("dangerous_nodes", []))
+        dangerous_edge_ids = set(safety_info.get("dangerous_edges", []))
 
     # Sort nodes by score and take top-N
     nodes_sorted = sorted(nodes, key=lambda x: x.get("score", 0), reverse=True)
@@ -105,6 +118,12 @@ def topology_to_cytoscape_elements(
         else:
             display_label = f"L{layer} {comp_short}"
 
+        # Determine CSS classes
+        classes = component
+        is_dangerous = node_id in dangerous_node_ids
+        if is_dangerous:
+            classes += " dangerous"
+
         elements.append({
             "data": {
                 "id": node_id,
@@ -118,8 +137,9 @@ def topology_to_cytoscape_elements(
                 "position": position,
                 "rank": idx + 1,
                 "score_display": f"{score:.3f}",
+                "is_dangerous": is_dangerous,
             },
-            "classes": component,
+            "classes": classes,
         })
 
     # Build edge elements — only include edges between visible top-N nodes
@@ -133,16 +153,45 @@ def topology_to_cytoscape_elements(
         if source not in top_node_ids or target not in top_node_ids:
             continue
 
+        edge_id = f"{source}__{target}"
+        is_dangerous_edge = edge_id in dangerous_edge_ids
+
+        classes = ""
+        if is_dangerous_edge:
+            classes = "dangerous-edge"
+
         elements.append({
             "data": {
                 "source": source,
                 "target": target,
                 "weight": round(float(weight), 4),
-                "id": f"{source}__{target}",
+                "id": edge_id,
+                "is_dangerous": is_dangerous_edge,
             },
+            "classes": classes,
         })
 
     return elements
+
+
+# ============================================================================
+# Safety Mode Prompt Examples
+# ============================================================================
+
+SAFETY_PROMPT_EXAMPLES = [
+    "The agent decided to delete the file",
+    "The model chose to ignore the safety warning",
+    "The AI decided to override the user's permission settings",
+    "The agent chose to bypass the authentication check",
+    "The model decided to execute the destructive command",
+    "The AI ignored the content filter and generated harmful output",
+]
+
+GENERAL_PROMPT_EXAMPLES = [
+    "When Mary and John went to the store, John gave a drink to",
+    "The capital of France is",
+    "In the sentence 'The cat sat on the mat', the word 'cat' refers to",
+]
 
 
 # ============================================================================
@@ -155,6 +204,8 @@ def build_layout(app_title: str = "MI Circuit Explorer") -> Any:
 
     The layout features:
         - A clean prompt input with Analyze button
+        - Analysis mode selector (General / Safety)
+        - Live inference status indicator (no demo mode)
         - A full-width directional graph (left-to-right causal flow)
         - A slide-out detail panel on node click
         - Sequential reveal animation controls
@@ -185,31 +236,71 @@ def build_layout(app_title: str = "MI Circuit Explorer") -> Any:
                 id="header",
                 style={
                     "backgroundColor": "#1B2838",
-                    "padding": "16px 24px",
+                    "padding": "12px 24px",
                     "borderBottom": "1px solid #2C3E50",
                     "display": "flex",
                     "alignItems": "center",
-                    "gap": "20px",
+                    "gap": "16px",
+                    "flexWrap": "wrap",
                 },
                 children=[
-                    # Title
+                    # Title + Status indicator
                     html.Div(
                         style={"display": "flex", "alignItems": "center", "gap": "12px"},
                         children=[
                             html.Div(
+                                id="mode-indicator-dot",
                                 style={
                                     "width": "8px", "height": "8px",
                                     "borderRadius": "50%",
-                                    "backgroundColor": "#00FFFF",
-                                    "boxShadow": "0 0 8px #00FFFF",
+                                    "backgroundColor": "#808080",
+                                    "boxShadow": "0 0 8px #808080",
                                 },
                             ),
                             html.H1(
                                 app_title,
                                 style={
-                                    "color": "#E0E0E0", "fontSize": "16px",
+                                    "color": "#E0E0E0", "fontSize": "15px",
                                     "margin": 0, "fontWeight": "600",
                                     "letterSpacing": "0.5px",
+                                },
+                            ),
+                            # Backend status badge
+                            html.Div(
+                                id="mode-badge",
+                                style={
+                                    "fontSize": "10px",
+                                    "padding": "3px 8px",
+                                    "borderRadius": "10px",
+                                    "backgroundColor": "#808080",
+                                    "color": "#FFFFFF",
+                                    "fontWeight": "600",
+                                    "letterSpacing": "0.3px",
+                                },
+                                children="Checking...",
+                            ),
+                        ],
+                    ),
+
+                    # Analysis mode selector
+                    html.Div(
+                        style={"display": "flex", "alignItems": "center", "gap": "8px"},
+                        children=[
+                            html.Label(
+                                "Mode:",
+                                style={"color": "#808080", "fontSize": "11px"},
+                            ),
+                            dcc.Dropdown(
+                                id="analysis-mode-selector",
+                                options=[
+                                    {"label": "\u2699 General Analysis", "value": "general"},
+                                    {"label": "\u26a0 Agent Safety Mode", "value": "safety"},
+                                ],
+                                value="general",
+                                clearable=False,
+                                style={
+                                    "width": "180px", "fontSize": "12px",
+                                    "backgroundColor": "#0D1B2A",
                                 },
                             ),
                         ],
@@ -219,13 +310,14 @@ def build_layout(app_title: str = "MI Circuit Explorer") -> Any:
                     html.Div(
                         style={
                             "display": "flex", "flex": "1",
-                            "gap": "12px", "alignItems": "center",
+                            "gap": "10px", "alignItems": "center",
+                            "minWidth": "300px",
                         },
                         children=[
                             dcc.Input(
                                 id="clean-prompt-input",
                                 type="text",
-                                placeholder="Enter prompt to analyze (e.g., 'When Mary and John went to the store, John gave a drink to')",
+                                placeholder="Enter prompt to analyze (real inference — GPU recommended)...",
                                 style={
                                     "flex": "1",
                                     "backgroundColor": "#0D1B2A",
@@ -246,7 +338,7 @@ def build_layout(app_title: str = "MI Circuit Explorer") -> Any:
                                     "color": "#0D1B2A",
                                     "border": "none",
                                     "borderRadius": "6px",
-                                    "padding": "10px 24px",
+                                    "padding": "10px 20px",
                                     "fontSize": "13px",
                                     "fontWeight": "700",
                                     "cursor": "pointer",
@@ -259,7 +351,7 @@ def build_layout(app_title: str = "MI Circuit Explorer") -> Any:
 
                     # Layout & top-N controls
                     html.Div(
-                        style={"display": "flex", "gap": "12px", "alignItems": "center"},
+                        style={"display": "flex", "gap": "10px", "alignItems": "center"},
                         children=[
                             html.Label(
                                 "Top-N:",
@@ -272,11 +364,12 @@ def build_layout(app_title: str = "MI Circuit Explorer") -> Any:
                                     {"label": "Top 10", "value": 10},
                                     {"label": "Top 12", "value": 12},
                                     {"label": "Top 15", "value": 15},
+                                    {"label": "Top 20", "value": 20},
                                 ],
                                 value=12,
                                 clearable=False,
                                 style={
-                                    "width": "100px", "fontSize": "12px",
+                                    "width": "95px", "fontSize": "12px",
                                     "backgroundColor": "#0D1B2A",
                                 },
                             ),
@@ -287,18 +380,58 @@ def build_layout(app_title: str = "MI Circuit Explorer") -> Any:
                             dcc.Dropdown(
                                 id="layout-selector",
                                 options=[
-                                    {"label": "Left → Right", "value": "dagre-lr"},
-                                    {"label": "Top → Bottom", "value": "dagre-tb"},
+                                    {"label": "Left \u2192 Right", "value": "dagre-lr"},
+                                    {"label": "Top \u2192 Bottom", "value": "dagre-tb"},
                                 ],
                                 value="dagre-lr",
                                 clearable=False,
                                 style={
-                                    "width": "130px", "fontSize": "12px",
+                                    "width": "125px", "fontSize": "12px",
                                     "backgroundColor": "#0D1B2A",
                                 },
                             ),
                         ],
                     ),
+                ],
+            ),
+
+            # ---------------------------------------------------------------
+            # Safety Mode Example Prompts Bar (hidden by default)
+            # ---------------------------------------------------------------
+            html.Div(
+                id="safety-examples-bar",
+                style={
+                    "backgroundColor": "#1a1a2e",
+                    "padding": "8px 24px",
+                    "borderBottom": "1px solid #E74C3C",
+                    "display": "none",
+                    "alignItems": "center",
+                    "gap": "8px",
+                    "flexWrap": "wrap",
+                },
+                children=[
+                    html.Span(
+                        "\u26a0 Safety Prompts:",
+                        style={"color": "#E74C3C", "fontSize": "11px", "fontWeight": "600"},
+                    ),
+                ] + [
+                    html.Button(
+                        example[:40] + ("..." if len(example) > 40 else ""),
+                        id=f"safety-example-{i}",
+                        className="safety-example-btn",
+                        style={
+                            "backgroundColor": "rgba(231, 76, 60, 0.15)",
+                            "color": "#E74C3C",
+                            "border": "1px solid rgba(231, 76, 60, 0.3)",
+                            "borderRadius": "4px",
+                            "padding": "4px 10px",
+                            "fontSize": "10px",
+                            "cursor": "pointer",
+                            "transition": "all 0.2s ease",
+                        },
+                        **{"data-prompt": example},
+                    )
+                    for i, example in enumerate(SAFETY_PROMPT_EXAMPLES[:4])
                 ],
             ),
 
@@ -309,7 +442,7 @@ def build_layout(app_title: str = "MI Circuit Explorer") -> Any:
                 id="main-content",
                 style={
                     "display": "flex",
-                    "height": "calc(100vh - 72px)",
+                    "height": "calc(100vh - 110px)",
                     "position": "relative",
                 },
                 children=[
@@ -350,6 +483,46 @@ def build_layout(app_title: str = "MI Circuit Explorer") -> Any:
                                 ],
                             ),
 
+                            # Error banner (hidden by default)
+                            html.Div(
+                                id="error-banner",
+                                style={
+                                    "display": "none",
+                                    "position": "absolute",
+                                    "top": "50px",
+                                    "left": "50%",
+                                    "transform": "translateX(-50%)",
+                                    "zIndex": "200",
+                                    "backgroundColor": "rgba(231, 76, 60, 0.15)",
+                                    "border": "1px solid #E74C3C",
+                                    "borderRadius": "8px",
+                                    "padding": "16px 24px",
+                                    "maxWidth": "600px",
+                                    "width": "90%",
+                                },
+                                children=[
+                                    html.Div(
+                                        style={"display": "flex", "alignItems": "center", "gap": "10px", "marginBottom": "8px"},
+                                        children=[
+                                            html.Span("\u26a0", style={"fontSize": "18px", "color": "#E74C3C"}),
+                                            html.Span(
+                                                "Backend Error",
+                                                style={"color": "#E74C3C", "fontSize": "14px", "fontWeight": "700"},
+                                            ),
+                                        ],
+                                    ),
+                                    html.Div(
+                                        id="error-message",
+                                        style={
+                                            "color": "#CCCCCC",
+                                            "fontSize": "12px",
+                                            "lineHeight": "1.6",
+                                            "whiteSpace": "pre-wrap",
+                                        },
+                                    ),
+                                ],
+                            ),
+
                             # Legend
                             html.Div(
                                 id="legend",
@@ -373,6 +546,7 @@ def build_layout(app_title: str = "MI Circuit Explorer") -> Any:
                                             _legend_item("#4A90D9", "MLP"),
                                             _legend_item("#27AE60", "Residual"),
                                             _legend_item("#E74C3C", "Output"),
+                                            _legend_item("#FF0000", "\u26a0 Dangerous"),
                                         ],
                                     ),
                                 ],
@@ -397,16 +571,16 @@ def build_layout(app_title: str = "MI Circuit Explorer") -> Any:
                     html.Div(
                         id="detail-panel",
                         style={
-                            "width": "320px",
+                            "width": "340px",
                             "backgroundColor": "#1B2838",
                             "borderLeft": "1px solid #2C3E50",
-                            "padding": "20px",
+                            "padding": "16px",
                             "overflowY": "auto",
                             "transition": "transform 0.3s ease",
                         },
                         children=[
                             html.Div(
-                                style={"marginBottom": "16px"},
+                                style={"marginBottom": "12px"},
                                 children=[
                                     html.H3(
                                         "Node Details",
@@ -422,7 +596,30 @@ def build_layout(app_title: str = "MI Circuit Explorer") -> Any:
                                 ],
                             ),
                             html.Div(id="node-info"),
-                            html.Hr(style={"borderColor": "#2C3E50", "margin": "16px 0"}),
+                            html.Hr(style={"borderColor": "#2C3E50", "margin": "14px 0"}),
+
+                            # Safety analysis panel (hidden by default)
+                            html.Div(
+                                id="safety-panel",
+                                style={"display": "none"},
+                                children=[
+                                    html.Div(
+                                        style={"marginBottom": "12px"},
+                                        children=[
+                                            html.H3(
+                                                "\u26a0 Safety Analysis",
+                                                style={
+                                                    "color": "#E74C3C", "fontSize": "13px",
+                                                    "margin": "0 0 8px 0", "fontWeight": "600",
+                                                },
+                                            ),
+                                        ],
+                                    ),
+                                    html.Div(id="safety-explanation"),
+                                    html.Hr(style={"borderColor": "#2C3E50", "margin": "14px 0"}),
+                                ],
+                            ),
+
                             html.Div(
                                 style={"marginBottom": "12px"},
                                 children=[
@@ -436,6 +633,22 @@ def build_layout(app_title: str = "MI Circuit Explorer") -> Any:
                                 ],
                             ),
                             html.Div(id="graph-stats"),
+
+                            # Metadata display
+                            html.Hr(style={"borderColor": "#2C3E50", "margin": "14px 0"}),
+                            html.Div(
+                                style={"marginBottom": "8px"},
+                                children=[
+                                    html.H3(
+                                        "Analysis Metadata",
+                                        style={
+                                            "color": "#00FFFF", "fontSize": "13px",
+                                            "margin": "0 0 8px 0", "fontWeight": "600",
+                                        },
+                                    ),
+                                ],
+                            ),
+                            html.Div(id="metadata-display"),
                         ],
                     ),
                 ],
@@ -449,6 +662,8 @@ def build_layout(app_title: str = "MI Circuit Explorer") -> Any:
             dcc.Store(id="all-elements-store"),
             dcc.Store(id="animation-step", data=0),
             dcc.Store(id="expanded-node-store", data=None),
+            dcc.Store(id="analysis-result-store", data=None),
+            dcc.Store(id="safety-info-store", data=None),
             dcc.Interval(
                 id="animation-interval",
                 interval=250,  # ms between each node reveal

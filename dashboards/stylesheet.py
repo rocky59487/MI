@@ -12,7 +12,9 @@ Color scheme:
     - MLP nodes:          #4A90D9 (blue)
     - Residual nodes:     #27AE60 (green)
     - Output nodes:       #E74C3C (red)
+    - Dangerous nodes:    #FF0000 (bright red with pulse animation)
     - Edges:              Gradient from #4A90D9 to #E74C3C based on weight
+    - Dangerous edges:    #FF0000 with pulse effect
 """
 
 from __future__ import annotations
@@ -124,6 +126,31 @@ def build_stylesheet() -> List[Dict]:
             },
         },
         # ---------------------------------------------------------------
+        # DANGEROUS NODE — Safety Mode highlighting
+        # ---------------------------------------------------------------
+        {
+            "selector": "node.dangerous",
+            "style": {
+                "background-color": "#FF0000",
+                "border-color": "#FF4444",
+                "border-width": "4px",
+                "shadow-blur": "25px",
+                "shadow-color": "#FF0000",
+                "shadow-opacity": 0.9,
+                "shape": "ellipse",
+                "width": "mapData(score, 0, 1, 36, 64)",
+                "height": "mapData(score, 0, 1, 36, 64)",
+                "text-outline-color": "#330000",
+                "color": "#FFFFFF",
+            },
+        },
+        {
+            "selector": "node.dangerous.visible",
+            "style": {
+                "opacity": 1.0,
+            },
+        },
+        # ---------------------------------------------------------------
         # Selected / clicked node
         # ---------------------------------------------------------------
         {
@@ -198,6 +225,26 @@ def build_stylesheet() -> List[Dict]:
                 "line-color": "#E74C3C",
                 "target-arrow-color": "#E74C3C",
                 "z-index": 100,
+            },
+        },
+        # ---------------------------------------------------------------
+        # DANGEROUS EDGE — Safety Mode red pulse path
+        # ---------------------------------------------------------------
+        {
+            "selector": "edge.dangerous-edge",
+            "style": {
+                "line-color": "#FF0000",
+                "target-arrow-color": "#FF0000",
+                "width": 5,
+                "opacity": 1.0,
+                "line-style": "solid",
+                "z-index": 200,
+            },
+        },
+        {
+            "selector": "edge.dangerous-edge.visible",
+            "style": {
+                "opacity": 1.0,
             },
         },
         # ---------------------------------------------------------------
