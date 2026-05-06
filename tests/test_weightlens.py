@@ -80,6 +80,16 @@ class TestVocabProjector(unittest.TestCase):
             zscores = [abs(z) for z in zscore_values]
             self.assertEqual(zscores, sorted(zscores, reverse=True))
 
+    def test_analyze_batch_returns_valid_semantics(self):
+        results = self.projector.analyze_batch(
+            self.W_enc, self.W_dec, layer_idx=0,
+            feature_indices=[0, 1, 2]
+        )
+        self.assertEqual(len(results), 3)
+        for r in results:
+            self.assertIsInstance(r.input_tokens, list)
+            self.assertIsInstance(r.zscore_values, list)
+
     def test_cross_layer_connections_shape(self):
         """Cross-layer connection computation should return valid tuples."""
         connections = self.projector.compute_cross_layer_connections(

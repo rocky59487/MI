@@ -57,6 +57,11 @@ class FeatureSemantics:
     raw_label: str = ""
     connected_features: List[Tuple[int, int]] = field(default_factory=list)
 
+    @property
+    def zscore_values(self) -> List[float]:
+        """Backward-compatible alias for input z-score values."""
+        return self.input_zscores
+
     def to_dict(self) -> Dict:
         return {
             "feature_idx": self.feature_idx,
@@ -244,11 +249,11 @@ class VocabProjector:
                 results.append(FeatureSemantics(
                     feature_idx=feat_idx,
                     layer_idx=layer_idx,
-                    input_tokens=[t for t, _ in input_tokens],
-                    input_zscores=[z for _, z in input_tokens],
+                    input_tokens=input_tokens,
+                    input_zscores=input_zscores,
                     output_tokens_promoted=[t for t, _ in promoted],
                     output_tokens_suppressed=[t for t, _ in suppressed],
-                    output_zscores=[z for _, z in output_tokens_all],
+                    output_zscores=output_zscores_all,
                 ))
 
         return results
