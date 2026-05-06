@@ -1,19 +1,20 @@
 """
-MI Toolkit Dashboard Application Entry Point.
+MI Circuit Explorer — Directional Causal Flow Dashboard.
 
 Launch the interactive circuit visualization dashboard with:
     python dashboards/app.py
 
-Or from the project root:
-    python -m dashboards.app
+The dashboard visualizes how a language model "thinks" by showing the
+directional causal flow from input through attention heads and MLPs to
+the final output prediction. Nodes appear sequentially like a typewriter
+effect, revealing the model's reasoning chain step by step.
 
-The dashboard provides:
-    - Interactive DAG visualization of ReIP causal topology graphs
-    - Node hover/click for WeightLens semantic labels and Z-scores
-    - Edge thickness/color encoding for attribution scores
-    - Layout switching (dagre, breadthfirst, cose)
-    - Real-time threshold filtering
-    - In-browser ReIP analysis trigger
+Features:
+    - Directional flow graph (left-to-right or top-to-bottom)
+    - Top-N filtering (only show most important nodes by ReIP score)
+    - Sequential reveal animation (nodes appear one-by-one)
+    - Click-to-expand node details with causal interpretation
+    - Deep space + neural pulse visual theme
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ try:
 except ImportError:
     HAS_DASH = False
     print(
-        "[MI Dashboard] Dash or dash-cytoscape not installed.\n"
+        "[MI Circuit Explorer] Dash or dash-cytoscape not installed.\n"
         "Install with: pip install dash dash-cytoscape\n"
     )
 
@@ -43,7 +44,7 @@ from dashboards.callbacks import register_callbacks
 
 def create_app(debug: bool = False) -> "dash.Dash":
     """
-    Create and configure the MI Toolkit Dash application.
+    Create and configure the MI Circuit Explorer Dash application.
 
     Args:
         debug: Enable Dash debug mode (hot reload, error overlay).
@@ -62,7 +63,7 @@ def create_app(debug: bool = False) -> "dash.Dash":
 
     app = dash.Dash(
         __name__,
-        title="MI Toolkit — Mechanistic Interpretability Dashboard",
+        title="MI Circuit Explorer — Causal Flow Visualization",
         suppress_callback_exceptions=True,
         meta_tags=[
             {"name": "viewport", "content": "width=device-width, initial-scale=1"}
@@ -81,8 +82,9 @@ def main():
     port = int(os.environ.get("MI_PORT", "8050"))
     host = os.environ.get("MI_HOST", "0.0.0.0")
 
-    print(f"[MI Dashboard] Starting server at http://{host}:{port}")
-    print(f"[MI Dashboard] Debug mode: {debug}")
+    print(f"[MI Circuit Explorer] Starting server at http://{host}:{port}")
+    print(f"[MI Circuit Explorer] Debug mode: {debug}")
+    print(f"[MI Circuit Explorer] Directional causal flow visualization")
 
     app = create_app(debug=debug)
     app.run(host=host, port=port, debug=debug)

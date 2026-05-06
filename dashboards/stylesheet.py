@@ -1,19 +1,18 @@
 """
-Cytoscape Stylesheet for MI Toolkit Dashboard.
+Cytoscape Stylesheet for MI Circuit Explorer — Neural Pulse Flow Design.
 
-This module defines the visual style mappings for the interactive DAG
-visualization. Causal attribution scores from ReIP are mapped to:
-    - Edge width (weight -> line thickness)
-    - Edge color intensity (weight -> color gradient)
-    - Node size (feature importance -> node radius)
-    - Node color (component type -> color category)
+This module defines the visual style mappings for the directional causal flow
+visualization. The design follows a "neural pulse flow" aesthetic with a deep
+space theme, but arranged as a left-to-right directional graph showing how
+information flows through the model's layers.
 
 Color scheme:
-    - MLP nodes:      #4A90D9 (blue)
-    - Attention nodes: #E67E22 (orange)
-    - Residual nodes:  #27AE60 (green)
-    - Embedding nodes: #8E44AD (purple)
-    - Selected nodes:  #E74C3C (red highlight)
+    - Input/Embed nodes:  #8E44AD (purple)
+    - Attention nodes:    #E67E22 (orange)
+    - MLP nodes:          #4A90D9 (blue)
+    - Residual nodes:     #27AE60 (green)
+    - Output nodes:       #E74C3C (red)
+    - Edges:              Gradient from #4A90D9 to #E74C3C based on weight
 """
 
 from __future__ import annotations
@@ -21,148 +20,183 @@ from __future__ import annotations
 from typing import List, Dict
 
 
-def build_stylesheet(
-    min_edge_width: float = 1.0,
-    max_edge_width: float = 12.0,
-    min_node_size: float = 20.0,
-    max_node_size: float = 60.0,
-) -> List[Dict]:
+def build_stylesheet() -> List[Dict]:
     """
-    Build the Cytoscape stylesheet for the circuit topology visualization.
-
-    The stylesheet uses CSS-like selectors to apply visual properties to
-    nodes and edges based on their data attributes.
-
-    Args:
-        min_edge_width: Minimum edge line width in pixels.
-        max_edge_width: Maximum edge line width in pixels.
-        min_node_size: Minimum node diameter in pixels.
-        max_node_size: Maximum node diameter in pixels.
+    Build the Cytoscape stylesheet for the directional causal flow visualization.
 
     Returns:
         List of Cytoscape stylesheet dictionaries.
     """
     stylesheet = [
         # ---------------------------------------------------------------
-        # Default node style
+        # Default node style — rounded rectangle for flow nodes
         # ---------------------------------------------------------------
         {
             "selector": "node",
             "style": {
                 "label": "data(label)",
                 "text-valign": "center",
-                "text-halign": "center",
-                "font-size": "9px",
-                "font-family": "monospace",
-                "color": "#FFFFFF",
-                "text-outline-color": "#2C3E50",
-                "text-outline-width": "1px",
+                "text-halign": "right",
+                "text-margin-x": "8px",
+                "font-size": "11px",
+                "font-family": "'JetBrains Mono', 'Fira Code', monospace",
+                "color": "#E0E0E0",
+                "text-outline-color": "#0D1B2A",
+                "text-outline-width": "1.5px",
                 "text-wrap": "wrap",
-                "text-max-width": "80px",
-                "width": "mapData(score, 0, 1, 20, 55)",
-                "height": "mapData(score, 0, 1, 20, 55)",
+                "text-max-width": "120px",
+                "width": "mapData(score, 0, 1, 28, 56)",
+                "height": "mapData(score, 0, 1, 28, 56)",
                 "background-color": "#4A90D9",
-                "border-width": "1.5px",
-                "border-color": "#2C3E50",
-                "opacity": 0.9,
+                "border-width": "2px",
+                "border-color": "#1B2838",
+                "shape": "ellipse",
+                "opacity": 0,
+                "transition-property": "opacity, background-color, width, height",
+                "transition-duration": "0.6s",
+                "transition-timing-function": "ease-out",
+                "ghost": "yes",
+                "ghost-offset-x": "2px",
+                "ghost-offset-y": "2px",
+                "ghost-opacity": 0.15,
+            },
+        },
+        # ---------------------------------------------------------------
+        # Visible node (after animation reveals it)
+        # ---------------------------------------------------------------
+        {
+            "selector": "node.visible",
+            "style": {
+                "opacity": 1.0,
             },
         },
         # ---------------------------------------------------------------
         # Component-specific node colors
         # ---------------------------------------------------------------
         {
-            "selector": "node[component = 'mlp']",
+            "selector": "node[component = 'embed']",
             "style": {
-                "background-color": "#4A90D9",  # Blue
-                "border-color": "#1A5276",
+                "background-color": "#8E44AD",
+                "border-color": "#6C3483",
+                "shape": "diamond",
             },
         },
         {
             "selector": "node[component = 'attn']",
             "style": {
-                "background-color": "#E67E22",  # Orange
-                "border-color": "#784212",
+                "background-color": "#E67E22",
+                "border-color": "#A04000",
+            },
+        },
+        {
+            "selector": "node[component = 'mlp']",
+            "style": {
+                "background-color": "#4A90D9",
+                "border-color": "#1A5276",
             },
         },
         {
             "selector": "node[component = 'resid']",
             "style": {
-                "background-color": "#27AE60",  # Green
+                "background-color": "#27AE60",
                 "border-color": "#145A32",
             },
         },
         {
-            "selector": "node[component = 'embed']",
+            "selector": "node[component = 'output']",
             "style": {
-                "background-color": "#8E44AD",  # Purple
-                "border-color": "#4A235A",
-            },
-        },
-        {
-            "selector": "node[component = 'ln']",
-            "style": {
-                "background-color": "#95A5A6",  # Gray
-                "border-color": "#566573",
+                "background-color": "#E74C3C",
+                "border-color": "#922B21",
+                "shape": "star",
             },
         },
         # ---------------------------------------------------------------
-        # High-relevance node highlight
+        # High-relevance node glow effect
         # ---------------------------------------------------------------
         {
             "selector": "node[score > 0.7]",
             "style": {
                 "border-width": "3px",
                 "border-color": "#F39C12",
-                "opacity": 1.0,
+                "shadow-blur": "12px",
+                "shadow-color": "#F39C12",
+                "shadow-opacity": 0.6,
             },
         },
         # ---------------------------------------------------------------
-        # Selected node
+        # Selected / clicked node
         # ---------------------------------------------------------------
         {
             "selector": "node:selected",
             "style": {
-                "background-color": "#E74C3C",
-                "border-color": "#922B21",
+                "border-color": "#00FFFF",
                 "border-width": "3px",
+                "shadow-blur": "20px",
+                "shadow-color": "#00FFFF",
+                "shadow-opacity": 0.8,
                 "z-index": 9999,
             },
         },
         # ---------------------------------------------------------------
-        # Hovered node
+        # Expanded node (clicked for details)
         # ---------------------------------------------------------------
         {
-            "selector": "node:active",
+            "selector": "node.expanded",
             "style": {
-                "overlay-color": "#F39C12",
-                "overlay-padding": "5px",
-                "overlay-opacity": 0.3,
+                "border-color": "#00FFFF",
+                "border-width": "3px",
+                "background-opacity": 1.0,
             },
         },
         # ---------------------------------------------------------------
-        # Default edge style
+        # Child/detail nodes
+        # ---------------------------------------------------------------
+        {
+            "selector": "node.child-node",
+            "style": {
+                "width": 20,
+                "height": 20,
+                "font-size": "9px",
+                "border-width": "1px",
+                "border-style": "dashed",
+                "opacity": 0.85,
+            },
+        },
+        # ---------------------------------------------------------------
+        # Default edge style — directional arrows
         # ---------------------------------------------------------------
         {
             "selector": "edge",
             "style": {
-                "width": f"mapData(weight, 0, 1, {min_edge_width}, {max_edge_width})",
-                "line-color": "mapData(weight, 0, 1, #BDC3C7, #E74C3C)",
-                "target-arrow-color": "mapData(weight, 0, 1, #BDC3C7, #E74C3C)",
+                "width": "mapData(weight, 0, 1, 1.5, 6)",
+                "line-color": "mapData(weight, 0, 1, #2C3E50, #E74C3C)",
+                "target-arrow-color": "mapData(weight, 0, 1, #2C3E50, #E74C3C)",
                 "target-arrow-shape": "triangle",
-                "arrow-scale": 0.8,
+                "arrow-scale": 1.0,
                 "curve-style": "bezier",
-                "opacity": "mapData(weight, 0, 1, 0.3, 0.9)",
+                "opacity": 0,
+                "transition-property": "opacity, line-color, width",
+                "transition-duration": "0.5s",
+                "transition-timing-function": "ease-out",
             },
         },
         # ---------------------------------------------------------------
-        # High-weight edge highlight
+        # Visible edge (after animation)
+        # ---------------------------------------------------------------
+        {
+            "selector": "edge.visible",
+            "style": {
+                "opacity": "mapData(weight, 0, 1, 0.4, 0.95)",
+            },
+        },
+        # ---------------------------------------------------------------
+        # High-weight edge — pulse glow
         # ---------------------------------------------------------------
         {
             "selector": "edge[weight > 0.7]",
             "style": {
-                "line-color": "#C0392B",
-                "target-arrow-color": "#C0392B",
-                "opacity": 1.0,
+                "line-color": "#E74C3C",
+                "target-arrow-color": "#E74C3C",
                 "z-index": 100,
             },
         },
@@ -172,65 +206,72 @@ def build_stylesheet(
         {
             "selector": "edge:selected",
             "style": {
-                "line-color": "#F39C12",
-                "target-arrow-color": "#F39C12",
-                "width": max_edge_width,
+                "line-color": "#00FFFF",
+                "target-arrow-color": "#00FFFF",
+                "width": 8,
                 "opacity": 1.0,
+            },
+        },
+        # ---------------------------------------------------------------
+        # Highlighted path edges
+        # ---------------------------------------------------------------
+        {
+            "selector": "edge.highlighted",
+            "style": {
+                "line-color": "#00FFFF",
+                "target-arrow-color": "#00FFFF",
+                "opacity": 1.0,
+                "width": 4,
             },
         },
     ]
     return stylesheet
 
 
-def get_layout_config(layout_name: str = "dagre") -> Dict:
+def get_layout_config(layout_name: str = "dagre-lr") -> Dict:
     """
-    Return Cytoscape layout configuration for hierarchical DAG display.
+    Return Cytoscape layout configuration for directional flow display.
+
+    The primary layout is left-to-right (LR) dagre which shows the causal
+    flow from input layers through intermediate processing to output.
 
     Args:
         layout_name: Layout algorithm name.
-                     Options: "dagre", "breadthfirst", "cose", "grid"
 
     Returns:
         Layout configuration dictionary for Cytoscape.
     """
     layouts = {
-        "dagre": {
+        "dagre-lr": {
             "name": "dagre",
-            "rankDir": "TB",       # Top-to-bottom: input -> output layers
-            "nodeSep": 50,
-            "rankSep": 80,
-            "edgeSep": 10,
+            "rankDir": "LR",
+            "nodeSep": 60,
+            "rankSep": 120,
+            "edgeSep": 20,
             "animate": True,
-            "animationDuration": 500,
+            "animationDuration": 800,
+            "fit": True,
+            "padding": 40,
+        },
+        "dagre-tb": {
+            "name": "dagre",
+            "rankDir": "TB",
+            "nodeSep": 50,
+            "rankSep": 100,
+            "edgeSep": 15,
+            "animate": True,
+            "animationDuration": 800,
+            "fit": True,
+            "padding": 40,
         },
         "breadthfirst": {
             "name": "breadthfirst",
             "directed": True,
-            "spacingFactor": 1.5,
+            "spacingFactor": 1.8,
             "animate": True,
-            "animationDuration": 500,
-        },
-        "cose": {
-            "name": "cose",
-            "idealEdgeLength": 100,
-            "nodeOverlap": 20,
-            "refresh": 20,
+            "animationDuration": 800,
             "fit": True,
-            "padding": 30,
-            "randomize": False,
-            "componentSpacing": 100,
-            "nodeRepulsion": 400000,
-            "edgeElasticity": 100,
-            "nestingFactor": 5,
-            "gravity": 80,
-            "numIter": 1000,
-            "animate": True,
-        },
-        "grid": {
-            "name": "grid",
-            "fit": True,
-            "padding": 30,
-            "avoidOverlap": True,
+            "padding": 40,
         },
     }
-    return layouts.get(layout_name, layouts["dagre"])
+    return layouts.get(layout_name, layouts["dagre-lr"])
