@@ -86,12 +86,18 @@ class TopologyPruner:
             if max_score > 0:
                 aggregated = {k: v / max_score for k, v in aggregated.items()}
 
-        # Build edge list: consecutive layer connections
+        # Build edge list: layer-wise consecutive connections
         edges: List[Dict] = []
         nodes: Dict[str, Dict] = {}
-        sorted_names = sorted(aggregated.keys())
+        sorted_names = sorted(
+            aggregated.keys(),
+            key=lambda n: (self._extract_layer_idx(n), self._extract_component(n), n),
+        )
+        names_by_layer: Dict[int, List[str]] = {}
+        for name in sorted_names:
+            names_by_layer.setdefault(self._extract_layer_idx(name), []).append(name)
 
-        for i, name in enumerate(sorted_names):
+        for name in sorted_names:
             scores = aggregated[name]
             layer_idx = self._extract_layer_idx(name)
             component = self._extract_component(name)
@@ -112,17 +118,27 @@ class TopologyPruner:
                     "score": round(score_val, 6),
                 }
 
-                # Connect to previous layer's same position
-                if i > 0:
-                    prev_name = sorted_names[i - 1]
+                # Connect from all components in previous layer at same position.
+                if layer_idx < 0:
+                    continue
+                prev_layer_names = names_by_layer.get(layer_idx - 1, [])
+                for prev_name in prev_layer_names:
                     src_id = f"{prev_name}__pos{pos_idx}"
-                    edge_score = score_val
+                    prev_scores = aggregated.get(prev_name)
+                    prev_score_val = (
+                        float(prev_scores[pos_idx].item())
+                        if prev_scores is not None and pos_idx < len(prev_scores)
+                        else 0.0
+                    )
+                    edge_score = min(prev_score_val, float(score_val))
                     if edge_score >= self.threshold:
-                        edges.append({
-                            "source": src_id,
-                            "target": node_id,
-                            "weight": round(edge_score, 6),
-                        })
+                        edges.append(
+                            {
+                                "source": src_id,
+                                "target": node_id,
+                                "weight": round(edge_score, 6),
+                            }
+                        )
 
         # Apply top-k filtering if specified
         if self.top_k is not None:
@@ -207,7 +223,11 @@ class TopologyPruner:
                     return int(parts[i + 1])
                 except ValueError:
                     pass
-        return -1  # Input embedding or final layer
+        if "embed" in hook_name:
+            return -1
+        if "ln_final" in hook_name:
+            return 10**6
+        return -1
 
     @staticmethod
     def _extract_component(hook_name: str) -> str:

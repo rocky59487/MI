@@ -12,7 +12,7 @@
 
 | 模組 | 功能 | 計算複雜度 |
 |------|------|-----------|
-| **ReIP** | 基於 clean/corrupted 梯度與激勵差異的 Prototype，帶有部分受 LRP 啟發的 backward hooks | O(2F + B) |
+| **ReIP** | LRP/梯度-激活差分原型（planned validation benchmark: PCC vs activation patching） | O(2F + B) |
 | **WeightLens** | 無資料集、無外部 LLM 的靜態特徵語意提取 | O(V × d) |
 | **CircuitLens** | 目標特徵對局部殘差流的敏感度分析 Prototype（Attention head 分解目前為 Placeholder） | O(N²) |
 | **Dashboard** | 拓樸圖的視覺化 Demo UI（實際 ReIP 執行尚未串接） | — |
@@ -227,7 +227,7 @@ pytest tests/ --cov=src --cov-report=html
 
 | 指標 | 目標值 | 對比基準 |
 |------|--------|---------|
-| ReIP PCC（IOI 任務） | > 0.95 | AtP: ~0.006 |
+| ReIP PCC（IOI 任務） | Planned benchmark (not yet claimed) | AtP baseline pending |
 | FADE 純度（Purity） | > 0.80 | MaxAct + GPT-4 |
 | FADE 清晰度（Clarity） | > 0.70 | MaxAct + GPT-4 |
 | FADE 響應度（Responsiveness） | > 0.75 | MaxAct + GPT-4 |
