@@ -210,18 +210,23 @@ class TranscoderLoader:
         """Parse a state dictionary into a TranscoderWeights instance."""
         try:
             # Support multiple key naming conventions
-            W_enc = state.get("W_enc") or state.get("encoder.weight")
-            W_dec = state.get("W_dec") or state.get("decoder.weight")
+            # NOTE: Cannot use `or` with Tensors (triggers RuntimeError:
+            # "Boolean value of Tensor with more than one element is ambiguous")
+            W_enc = state["W_enc"] if "W_enc" in state else state.get("encoder.weight")
+            W_dec = state["W_dec"] if "W_dec" in state else state.get("decoder.weight")
 
             if W_enc is None or W_dec is None:
                 return None
+
+            b_enc = state["b_enc"] if "b_enc" in state else state.get("encoder.bias")
+            b_dec = state["b_dec"] if "b_dec" in state else state.get("decoder.bias")
 
             return TranscoderWeights(
                 layer_idx=layer_idx,
                 W_enc=W_enc.float(),
                 W_dec=W_dec.float(),
-                b_enc=state.get("b_enc") or state.get("encoder.bias"),
-                b_dec=state.get("b_dec") or state.get("decoder.bias"),
+                b_enc=b_enc,
+                b_dec=b_dec,
             )
         except Exception as e:
             if self.verbose:

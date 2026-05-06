@@ -12,10 +12,10 @@
 
 | 模組 | 功能 | 計算複雜度 |
 |------|------|-----------|
-| **ReIP** | LRP 反向傳播迴路定位，PCC > 0.95 vs 激勵修補 | O(2F + B) |
+| **ReIP** | 基於 clean/corrupted 梯度與激勵差異的 Prototype，帶有部分受 LRP 啟發的 backward hooks | O(2F + B) |
 | **WeightLens** | 無資料集、無外部 LLM 的靜態特徵語意提取 | O(V × d) |
-| **CircuitLens** | Jacobian + DBSCAN 多義性特徵分解 | O(N²) |
-| **Dashboard** | Cytoscape DAG 視覺化，因果分數 → 邊緣粗細/顏色 | — |
+| **CircuitLens** | 目標特徵對局部殘差流的敏感度分析 Prototype（Attention head 分解目前為 Placeholder） | O(N²) |
+| **Dashboard** | 拓樸圖的視覺化 Demo UI（實際 ReIP 執行尚未串接） | — |
 | **Hardware** | VRAM 自動分配、INT8 量化、Air-Gapped 離線模式 | — |
 
 ---
@@ -69,7 +69,7 @@ result = pipeline.run(
     target_token=" Mary",
 )
 
-print(f"迴路節點數: {len(result.topology_graph.nodes)}")
+print(f"關聯性拓樸圖節點數: {len(result.topology_graph.nodes)}")
 print(f"分析耗時: {result.runtime_seconds:.3f}s")
 ```
 

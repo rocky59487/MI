@@ -10,9 +10,9 @@
 
 本專案旨在為 GitHub 儲存庫 `rocky59487/MI` 構建一套「輕量級機制可解釋性分析工具（Lightweight Mechanistic Interpretability Toolkit）」。該工具的核心目標是無縫整合「相關性修補（Relevance Patching, RelP）」與「靜態權重解析框架（WeightLens/CircuitLens）」，以解決當代大型語言模型（LLMs）在自動化神經元迴路發現中所面臨的計算複雜度與認識論挑戰。
 
-在機制可解釋性（Mechanistic Interpretability）研究領域中，傳統的「激勵修補（Activation Patching）」需要進行 $O(|E|)$ 次的窮舉前向傳播，對消費級硬體而言完全不可行。學界雖提出「歸因修補（Attribution Patching, AtP）」以降低計算成本，但此方法在深層網路中遭遇致命的「梯度病理（Gradient Pathology）」問題，導致皮爾森相關係數（PCC）僅達 0.006，幾乎完全失效。本專案透過引入層級相關性傳播（LRP）衍生出的傳播係數，徹底解決梯度崩潰問題，並結合轉碼器（Transcoder）架構進行靜態權重解析，實現無資料集（Dataset-Free）、無模型依賴（Explainer-Free）的特徵語意提取。
+在機制可解釋性（Mechanistic Interpretability）研究領域中，傳統的「激勵修補（Activation Patching）」需要進行 $O(|E|)$ 次的窮舉前向傳播，對消費級硬體而言完全不可行。學界雖提出「歸因修補（Attribution Patching, AtP）」以降低計算成本，但此方法在深層網路中遭遇致命的「梯度病理（Gradient Pathology）」問題，導致皮爾森相關係數（PCC）僅達 0.006，幾乎完全失效。本專案透過引入基於 clean/corrupted 梯度與激勵差異（grad_delta * act_delta）的 Prototype，並帶有部分受 LRP 啟發的 backward hooks，嘗試緩解梯度崩潰問題，並結合轉碼器（Transcoder）架構進行靜態權重解析，探索無資料集（Dataset-Free）的特徵語意提取。
 
-最終交付要求是確保整個端到端分析管線能夠在單張消費級 **NVIDIA RTX 4090（24GB VRAM）** 顯示卡上，以毫秒至數十秒級別的速度穩定運行，完成從動態因果節點定位到靜態人類語意標註的完整流程。本工具的設計哲學是將原本專屬於頂尖實驗室的迴路發現能力，下放至獨立研究者與學術單位的桌面環境。
+最終交付要求是確保整個端到端分析管線能夠在單張消費級 **NVIDIA RTX 4090（24GB VRAM）** 顯示卡上，以毫秒至數十秒級別的速度穩定運行，完成從關聯性拓樸圖生成到靜態人類語意標註的初步流程。本工具的設計哲學是將原本專屬於頂尖實驗室的迴路發現能力，下放至獨立研究者與學術單位的桌面環境。
 
 ---
 
@@ -92,7 +92,7 @@ ReIP 模組的關鍵工作是在 `lrp_rules.py` 中，以 PyTorch `autograd.Func
 | 乘法閘機制（Multiplicative Gates） | Half-rule | 將進入乘法分支的相關性分數強制平均分配至分支兩端（各 50%），防止信號在反向傳遞中產生虛假倍增。 | Qwen2, Gemma2-2B |
 | 線性投射層（Linear Layers） | 0-rule | 數學上等同於 Gradient × Input，設定為所有標準前饋神經網路與線性映射層的預設 LRP 模式。 | GPT-2, Pythia, Qwen2, Gemma2-2B |
 
-在 `backward_hooks.py` 中，開發者需透過 TransformerLens 的 `add_hook(dir="bwd")` 攔截標準梯度，並注入上述 LRP 規則。使用者介面應支援透過設定 `model.cfg.use_lrp = True` 與 `model.cfg.LRP_rules = [...]` 來啟動不同的傳播規則。`pipeline.py` 負責組裝端到端執行管線：首先呼叫 `run_with_cache` 分別對乾淨輸入與損壞輸入執行前向傳播，接著啟動單次 LRP 修改的反向傳播，最後由 `pruning.py` 剔除低貢獻分數的節點，輸出稀疏的因果計算拓撲圖（以 NetworkX 結構或 JSON 字典儲存）。
+在 `backward_hooks.py` 中，開發者需透過 TransformerLens 的 `add_hook(dir="bwd")` 攔截標準梯度，並注入上述 LRP 規則。使用者介面應支援透過設定 `model.cfg.use_lrp = True` 與 `model.cfg.LRP_rules = [...]` 來啟動不同的傳播規則。`pipeline.py` 負責組裝端到端執行管線：首先呼叫 `run_with_cache` 分別對乾淨輸入與損壞輸入執行前向傳播，接著啟動單次 LRP 修改的反向傳播，最後由 `pruning.py` 剔除低貢獻分數的節點，輸出基於啟發式邊界分數的關聯性拓樸圖（Relevance topology graph）（以 NetworkX 結構或 JSON 字典儲存）。
 
 ### 階段二：WeightLens 靜態權重解析（預計工時：2 週）
 
@@ -116,7 +116,7 @@ Z-分數閾值的設定需依據不同模型動態調整，如下表所示：
 
 在採用旋轉位置編碼（RoPE）的模型（如 Llama 與 Gemma）的中段層次中，特徵會變得高度依賴上下文，單純依賴靜態權重分析會導致純度（Purity）指標下降。CircuitLens 透過兩個機制解決此問題。
 
-首先，`jacobian.py` 實作雅可比矩陣計算，精確衡量特定輸入標記透過注意力頭網路傳遞給目標轉碼器特徵的確切梯度貢獻。開發者需編寫資料傳遞管道，將 ReIP 在第一階段計算出的高保真 LRP 歸因分數直接饋入雅可比矩陣運算核心，動態隔離並遮蔽（Masking）產生干擾的無關輸入，無需執行任何額外的激勵探測。
+首先，`jacobian.py` 實作雅可比矩陣計算，計算目標特徵對局部殘差流（local residual-stream）的敏感度分析 Prototype，Attention head 分解目前仍是 Placeholder。開發者需編寫資料傳遞管道，將 ReIP 在第一階段計算出的高保真 LRP 歸因分數直接饋入雅可比矩陣運算核心，動態隔離並遮蔽（Masking）產生干擾的無關輸入，無需執行任何額外的激勵探測。
 
 其次，`jaccard.py` 與 `clustering.py` 共同實作基於迴路計算拓撲的分群演算法。系統首先收集導致特定特徵激發的「注意力頭與標記配對」，計算這些配對集合之間的 Jaccard 相似度矩陣，量化不同輸入樣本觸發相同特徵時底層計算迴路的重疊程度。最後，DBSCAN 演算法對此矩陣進行無監督分群，將多義性特徵優雅地拆解為多個單義性（Monosemantic）子叢集，並為每個子叢集獨立生成精準的描述。
 
@@ -124,7 +124,7 @@ Z-分數閾值的設定需依據不同模型動態調整，如下表所示：
 
 本階段的目標是建構高效能的互動式儀表板，視覺化渲染機制可解釋性分析結果。**依賴關係：階段一、二、三完成。**
 
-`layout.py` 負責編寫資料轉換模組，將 ReIP 產生的稀疏拓撲字典與 WeightLens/CircuitLens 產生的 JSON 語意標籤，無縫轉換為 Cytoscape 可識別的 `elements` 列表。每個節點的資料結構必須包含 `data: {'id': 'layer_x_feature_y', 'label': 'Semantic Description'}`，其中 `label` 即為 WeightLens 解析出的人類可讀語意（例如「時間狀語提升」或「複數名詞檢測」）。
+`layout.py` 負責編寫資料轉換模組，提供拓樸圖的視覺化 Demo UI（實際 ReIP 執行尚未串接），將模擬的拓撲字典與 JSON 語意標籤轉換為 Cytoscape 可識別的 `elements` 列表。每個節點的資料結構必須包含 `data: {'id': 'layer_x_feature_y', 'label': 'Semantic Description'}`，其中 `label` 即為 WeightLens 解析出的人類可讀語意（例如「時間狀語提升」或「複數名詞檢測」）。
 
 `stylesheet.py` 需撰寫複雜的 Cytoscape 樣式表，利用選擇器（Selectors）將 ReIP 計算出的因果歸因分數精確對映至邊緣的粗細（`width`）與顏色深淺（`line-color`）。佈局演算法需設定為層級導向的 `dagre` 或 `breadthfirst`，確保特徵節點能從輸入嵌入層，跨越各層 MLP 轉碼器，一路平滑過渡至最終的邏輯（Logits）輸出層，清晰呈現資訊流路徑。
 
@@ -178,7 +178,7 @@ VRAM 分配需依循以下硬體承載力矩陣進行設計：
 
 **CircuitLens 模組**的設計旨在填補靜態分析在上下文依賴特徵上的缺陷。雅可比矩陣的計算必須與 ReIP 的 LRP 歸因分數深度整合，這種深度整合使得系統能夠動態隔離並遮蔽產生干擾的無關輸入，而無需執行任何額外耗時的激勵探測。DBSCAN 分群需基於 Jaccard 相似度矩陣進行，最終將多義性特徵優雅地拆解為多個單義性子叢集，並為每個子叢集獨立生成精準的描述。
 
-**Dash 儀表板**的設計需確保在處理數千個節點與邊緣時的流暢度。視覺化的直觀性是關鍵：因果分數越高的關鍵傳播路徑，在視覺圖表上必須越粗且顏色越顯著，使研究人員能一眼看穿網路的決策主幹。Callbacks 的實作需賦予研究人員在宏觀拓撲架構與微觀標記特徵之間自由穿梭的強大能力。
+**Dash 儀表板**的設計需確保在處理數千個節點與邊緣時的流暢度。視覺化的直觀性是關鍵：關聯性分數越高的傳播路徑，在視覺圖表上必須越粗且顏色越顯著，使研究人員能一眼看穿網路的決策主幹。Callbacks 的實作需賦予研究人員在宏觀拓撲架構與微觀標記特徵之間自由穿梭的強大能力。
 
 ---
 
@@ -205,7 +205,7 @@ VRAM 分配需依循以下硬體承載力矩陣進行設計：
 
 ### 開發優先順序
 
-建議的開發順序遵循「核心引擎優先、語意解析次之、複雜度解構第三、視覺化與最佳化並行、全面驗證收尾」的原則。具體而言，應優先完成 ReIP 模組（階段一），確保動態因果迴路定位的準確性，因為這是整個系統的數學基礎；接著開發 WeightLens 模組（階段二），實現靜態權重解析；再實作 CircuitLens 模組（階段三），處理深層特徵的上下文依賴；然後同步進行儀表板開發（階段四）與硬體效能最佳化（階段五）；最後執行測試驗證（階段六）。
+建議的開發順序遵循「核心引擎優先、語意解析次之、複雜度解構第三、視覺化與最佳化並行、全面驗證收尾」的原則。具體而言，應優先完成 ReIP 模組（階段一），確保關聯性拓樸圖生成的穩定性，因為這是整個系統的數學基礎；接著開發 WeightLens 模組（階段二），實現靜態權重解析；再實作 CircuitLens 模組（階段三），處理深層特徵的上下文依賴；然後同步進行儀表板開發（階段四）與硬體效能最佳化（階段五）；最後執行測試驗證（階段六）。
 
 ### 風險評估矩陣
 

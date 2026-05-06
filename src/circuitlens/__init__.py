@@ -11,12 +11,14 @@ Key components:
     - clustering: DBSCAN-based polysemanticity decomposition into monosemantic sub-clusters
 """
 
-from .jacobian import JacobianAnalyzer
+from .jacobian import JacobianAnalyzer, JacobianResult, AttentionHeadContribution
 from .jaccard import JaccardSimilarity
 from .clustering import CircuitClusterer
 
 __all__ = [
     "JacobianAnalyzer",
+    "JacobianResult",
+    "AttentionHeadContribution",
     "JaccardSimilarity",
     "CircuitClusterer",
 ]

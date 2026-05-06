@@ -12,13 +12,14 @@ Key components:
 """
 
 from .transcoder_loader import TranscoderLoader
-from .projection import VocabProjector
+from .projection import VocabProjector, FeatureSemantics
 from .lemmatizer import SemanticLemmatizer
 from .cache import FeatureCache
 
 __all__ = [
     "TranscoderLoader",
     "VocabProjector",
+    "FeatureSemantics",
     "SemanticLemmatizer",
     "FeatureCache",
 ]

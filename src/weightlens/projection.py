@@ -13,6 +13,7 @@ This module implements the core WeightLens analysis steps:
 
     Step 3 — Cross-layer Input-Invariant Connection Strength:
         f_dec^(l',i') · f_enc^(l,i)  -> scalar connection strength
+        Threshold via standard z = (strength - mean) / std comparison.
 
 Z-score thresholds (from benchmark data):
     GPT-2 family:                 4.0
@@ -79,6 +80,14 @@ class VocabProjector:
     any dataset or external LLM — all computation is purely matrix algebra
     on the model's learned weight matrices.
 
+    Key design decisions (P2 fixes applied):
+        - Batched projection: analyze_batch() uses a single matmul for all
+          features instead of a per-feature for-loop.
+        - Z-score fallback: when no tokens pass the threshold, fallback uses
+          .abs().topk() if include_negative=True, or plain .topk() otherwise.
+        - Cross-layer threshold: uses standard z = (strength - mean) / std
+          and compares against zscore_connected directly.
+
     Args:
         W_embed: Embedding matrix, shape (vocab_size, d_model).
         W_unembed: Unembedding matrix, shape (vocab_size, d_model).
@@ -140,14 +149,15 @@ class VocabProjector:
         # Step 1: Input token projection
         input_logits = self.W_embed @ enc_vec   # (vocab_size,)
         input_tokens, input_zscores = self._zscore_filter(
-            input_logits, self.zscore_input, self.top_k_tokens
+            input_logits, self.zscore_input, self.top_k_tokens,
+            include_negative=False,
         )
 
         # Step 2: Output effects projection
         output_logits = self.W_unembed @ dec_vec   # (vocab_size,)
         output_tokens_all, output_zscores_all = self._zscore_filter(
             output_logits, self.zscore_output, self.top_k_tokens * 2,
-            include_negative=True
+            include_negative=True,
         )
 
         # Split into promoted (positive Z) and suppressed (negative Z)
@@ -165,18 +175,20 @@ class VocabProjector:
         )
 
     @torch.no_grad()
-    def analyze_all_features(
+    def analyze_batch(
         self,
         W_enc: torch.Tensor,
         W_dec: torch.Tensor,
         layer_idx: int,
         feature_indices: Optional[List[int]] = None,
+        batch_size: int = 256,
     ) -> List[FeatureSemantics]:
         """
-        Analyze all (or a subset of) features in a Transcoder layer.
+        Analyze multiple features using batched matrix multiplication.
 
-        Uses batched matrix multiplication for efficiency, keeping computation
-        within the L2 cache by processing features in tiles.
+        Instead of a per-feature for-loop, this method performs a single
+        batched matmul for each tile of features, significantly improving
+        throughput on GPU.
 
         Args:
             W_enc: Encoder weight matrix, shape (d_model, n_features).
@@ -184,6 +196,7 @@ class VocabProjector:
             layer_idx: Transformer layer index.
             feature_indices: Subset of feature indices to analyze. If None,
                              analyzes all features.
+            batch_size: Number of features to process per batch (tile size).
 
         Returns:
             List of FeatureSemantics instances.
@@ -196,11 +209,75 @@ class VocabProjector:
             feature_indices = list(range(n_features))
 
         results = []
-        for feat_idx in feature_indices:
-            semantics = self.analyze_feature(W_enc, W_dec, feat_idx, layer_idx)
-            results.append(semantics)
+
+        # Process in batches for L2 cache efficiency
+        for batch_start in range(0, len(feature_indices), batch_size):
+            batch_indices = feature_indices[batch_start:batch_start + batch_size]
+            batch_tensor_indices = torch.tensor(batch_indices, device=self.device)
+
+            # Batched input projection: (vocab_size, d_model) @ (d_model, batch) -> (vocab_size, batch)
+            enc_batch = W_enc[:, batch_tensor_indices]  # (d_model, batch)
+            input_logits_batch = self.W_embed @ enc_batch  # (vocab_size, batch)
+
+            # Batched output projection: (vocab_size, d_model) @ (d_model, batch) -> (vocab_size, batch)
+            dec_batch = W_dec[batch_tensor_indices, :].T  # (d_model, batch)
+            output_logits_batch = self.W_unembed @ dec_batch  # (vocab_size, batch)
+
+            # Process each feature in the batch
+            for i, feat_idx in enumerate(batch_indices):
+                input_logits = input_logits_batch[:, i]
+                output_logits = output_logits_batch[:, i]
+
+                input_tokens, input_zscores = self._zscore_filter(
+                    input_logits, self.zscore_input, self.top_k_tokens,
+                    include_negative=False,
+                )
+
+                output_tokens_all, output_zscores_all = self._zscore_filter(
+                    output_logits, self.zscore_output, self.top_k_tokens * 2,
+                    include_negative=True,
+                )
+
+                promoted = [(t, z) for t, z in zip(output_tokens_all, output_zscores_all) if z > 0]
+                suppressed = [(t, z) for t, z in zip(output_tokens_all, output_zscores_all) if z < 0]
+
+                results.append(FeatureSemantics(
+                    feature_idx=feat_idx,
+                    layer_idx=layer_idx,
+                    input_tokens=[t for t, _ in input_tokens],
+                    input_zscores=[z for _, z in input_tokens],
+                    output_tokens_promoted=[t for t, _ in promoted],
+                    output_tokens_suppressed=[t for t, _ in suppressed],
+                    output_zscores=[z for _, z in output_tokens_all],
+                ))
 
         return results
+
+    @torch.no_grad()
+    def analyze_all_features(
+        self,
+        W_enc: torch.Tensor,
+        W_dec: torch.Tensor,
+        layer_idx: int,
+        feature_indices: Optional[List[int]] = None,
+    ) -> List[FeatureSemantics]:
+        """
+        Analyze all (or a subset of) features in a Transcoder layer.
+
+        This is a convenience wrapper around analyze_batch() that uses
+        the default batch size.
+
+        Args:
+            W_enc: Encoder weight matrix, shape (d_model, n_features).
+            W_dec: Decoder weight matrix, shape (n_features, d_model).
+            layer_idx: Transformer layer index.
+            feature_indices: Subset of feature indices to analyze. If None,
+                             analyzes all features.
+
+        Returns:
+            List of FeatureSemantics instances.
+        """
+        return self.analyze_batch(W_enc, W_dec, layer_idx, feature_indices)
 
     @torch.no_grad()
     def compute_cross_layer_connections(
@@ -217,6 +294,10 @@ class VocabProjector:
         For features at layer l and layer l' (l' > l), computes:
             c(l, i, l', i') = f_dec^(l',i') · f_enc^(l,i)
 
+        Threshold is applied using standard Z-score normalization:
+            z = (strength - mean) / std
+            Retain connections where |z| >= zscore_connected
+
         Args:
             W_enc_l: Encoder weights for layer l, shape (d_model, n_features_l).
             W_dec_l_prime: Decoder weights for layer l', shape (n_features_l', d_model).
@@ -226,7 +307,7 @@ class VocabProjector:
 
         Returns:
             List of (feature_l_idx, feature_l_prime_idx, connection_strength) tuples
-            where |connection_strength| exceeds zscore_connected threshold.
+            where the Z-score of connection_strength exceeds zscore_connected.
         """
         assert layer_l_prime > layer_l, "Target layer must be deeper than source layer."
 
@@ -238,27 +319,32 @@ class VocabProjector:
         # W_enc_l: (d_model, n_features_l)
         connection_matrix = W_dec_l_prime @ W_enc_l  # (n_features_l', n_features_l)
 
-        # Apply Z-score threshold to connection strengths
-        flat = connection_matrix.flatten()
-        mean = flat.mean().item()
-        std = flat.std().item()
-        if std == 0:
+        # Compute Z-scores for the entire connection matrix
+        # Standard approach: z = (value - mean) / std
+        mean = connection_matrix.mean()
+        std = connection_matrix.std()
+        if std.item() == 0:
             return []
 
-        threshold_val = mean + self.zscore_connected * std
-        strong_connections = []
+        zscore_matrix = (connection_matrix - mean) / std
 
+        # Select columns (source features) to examine
         if feature_indices_l is not None:
             col_indices = feature_indices_l
         else:
             col_indices = list(range(connection_matrix.shape[1]))
 
+        strong_connections = []
+
         for col_idx in col_indices:
-            col = connection_matrix[:, col_idx]
-            for row_idx in range(col.shape[0]):
-                strength = col[row_idx].item()
-                if abs(strength) >= abs(threshold_val):
-                    strong_connections.append((col_idx, row_idx, round(strength, 6)))
+            col_zscores = zscore_matrix[:, col_idx]
+            # Find rows where |z| >= zscore_connected
+            mask = col_zscores.abs() >= self.zscore_connected
+            row_indices = mask.nonzero(as_tuple=True)[0]
+
+            for row_idx in row_indices.tolist():
+                strength = connection_matrix[row_idx, col_idx].item()
+                strong_connections.append((col_idx, row_idx, round(strength, 6)))
 
         return strong_connections
 
@@ -268,9 +354,15 @@ class VocabProjector:
         threshold: float,
         top_k: int,
         include_negative: bool = False,
-    ) -> List[Tuple[str, float]]:
+    ) -> Tuple[List[str], List[float]]:
         """
         Apply Z-score filtering to a logit vector and return token-score pairs.
+
+        Fallback behavior (when no tokens pass threshold):
+            - If include_negative=True: fallback uses .abs().topk() to get the
+              most extreme tokens in either direction.
+            - If include_negative=False: fallback uses plain .topk() to get the
+              highest-scoring tokens only.
 
         Args:
             logits: Raw logit scores over vocabulary, shape (vocab_size,).
@@ -279,13 +371,13 @@ class VocabProjector:
             include_negative: If True, also return tokens with Z-score < -threshold.
 
         Returns:
-            List of (token_string, z_score) tuples sorted by |z_score| descending.
+            Tuple of (token_strings, z_scores) lists sorted by |z_score| descending.
         """
         mean = logits.mean()
         std = logits.std()
 
         if std.item() == 0:
-            return []
+            return [], []
 
         zscores = (logits - mean) / std
 
@@ -297,8 +389,13 @@ class VocabProjector:
         candidate_indices = mask.nonzero(as_tuple=True)[0]
 
         if len(candidate_indices) == 0:
-            # Fallback: return top-k by absolute z-score
-            _, top_indices = zscores.abs().topk(min(top_k, len(zscores)))
+            # Fallback: differentiate behavior based on include_negative
+            if include_negative:
+                # Get top-k by absolute value (most extreme in either direction)
+                _, top_indices = zscores.abs().topk(min(top_k, len(zscores)))
+            else:
+                # Get top-k by raw value (highest positive scores only)
+                _, top_indices = zscores.topk(min(top_k, len(zscores)))
             candidate_indices = top_indices
 
         # Sort by absolute z-score descending
@@ -307,8 +404,9 @@ class VocabProjector:
         candidate_indices = candidate_indices[sorted_order][:top_k]
         candidate_zscores = candidate_zscores[sorted_order][:top_k]
 
-        results = []
-        for idx, zscore in zip(candidate_indices.tolist(), candidate_zscores.tolist()):
+        token_strings = []
+        zscore_values = []
+        for idx, zscore_val in zip(candidate_indices.tolist(), candidate_zscores.tolist()):
             try:
                 token_str = self.tokenizer.convert_ids_to_tokens(idx)
                 if token_str is None:
@@ -317,6 +415,7 @@ class VocabProjector:
                 token_str = token_str.replace("Ġ", " ").replace("▁", " ")
             except Exception:
                 token_str = f"<token_{idx}>"
-            results.append((token_str, round(zscore, 4)))
+            token_strings.append(token_str)
+            zscore_values.append(round(zscore_val, 4))
 
-        return results
+        return token_strings, zscore_values
