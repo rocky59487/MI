@@ -50,6 +50,7 @@ class ReIPConfig:
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     verbose: bool = False
     reset_hooks_end: bool = True
+    strict_hooks: bool = False
 
 
 @dataclass
@@ -116,6 +117,7 @@ class ReIPPipeline:
             rules=self.config.lrp_rules,
             model_name=self.config.model_name,
             verbose=self.config.verbose,
+            strict=self.config.strict_hooks,
         )
         self.pruner = TopologyPruner(
             threshold=self.config.pruning_threshold,
