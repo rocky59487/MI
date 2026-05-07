@@ -53,6 +53,7 @@ class ReIPConfig:
     strict_hooks: bool = False
     scoring_formula: str = "balanced_grad_x_act_delta"
     blend_alpha: float = 0.5
+    objective: str = "logit_gap"
 
 
 @dataclass
@@ -101,6 +102,15 @@ class ReIPPipeline:
         )
         print(f"Nodes in circuit: {len(result.topology_graph.nodes)}")
     """
+
+    SUPPORTED_SCORING_FORMULAS = {
+        "corr_grad_x_act_delta",
+        "clean_grad_x_act_delta",
+        "grad_delta_x_act_delta",
+        "half_sum_x_act_delta",
+        "balanced_grad_x_act_delta",
+    }
+    SUPPORTED_OBJECTIVES = {"logit_gap", "clean_logit"}
 
     def __init__(
         self,
@@ -203,25 +213,11 @@ class ReIPPipeline:
 
         with self.hook_manager.active():
             # Forward pass for clean input with gradient-capturing hooks
-            fwd_hooks_clean = [
-                (hp, _make_retain_grad_hook(captured_clean, hp))
-                for hp in hook_points
-            ]
+            fwd_hooks_clean = [(hp, _make_retain_grad_hook(captured_clean, hp)) for hp in hook_points]
             clean_logits = self.model.run_with_hooks(
                 clean_tokens,
                 return_type="logits",
                 fwd_hooks=fwd_hooks_clean,
-            )
-
-            # Forward pass for corrupted input with gradient-capturing hooks
-            fwd_hooks_corrupted = [
-                (hp, _make_retain_grad_hook(captured_corrupted, hp))
-                for hp in hook_points
-            ]
-            corrupted_logits = self.model.run_with_hooks(
-                corrupted_tokens,
-                return_type="logits",
-                fwd_hooks=fwd_hooks_corrupted,
             )
 
             if self.config.verbose:
@@ -240,16 +236,45 @@ class ReIPPipeline:
                     raise IndexError(
                         f"target_token_id {target_token_id} out of range for vocabulary size {vocab_size}."
                     )
-                clean_log_probs = torch.log_softmax(clean_logits[0, pos_idx], dim=-1)
-                corrupted_log_probs = torch.log_softmax(corrupted_logits[0, pos_idx], dim=-1)
-                loss = -(clean_log_probs[target_token_id] - corrupted_log_probs[target_token_id])
+                clean_target = clean_logits[0, pos_idx, target_token_id]
             else:
-                loss = -clean_logits[0, pos_idx].max()
+                clean_target = clean_logits[0, pos_idx].max()
 
-            loss.backward()
+            # clean backward pass
+            self.model.zero_grad()
+            clean_target.backward()
+            clean_grads: Dict[str, Optional[torch.Tensor]] = {
+                name: (act.grad.clone() if act.grad is not None else None)
+                for name, act in captured_clean.items()
+            }
+
+            # Corrupted forward pass + backward pass
+            fwd_hooks_corrupted = [(hp, _make_retain_grad_hook(captured_corrupted, hp)) for hp in hook_points]
+            corrupted_logits = self.model.run_with_hooks(
+                corrupted_tokens,
+                return_type="logits",
+                fwd_hooks=fwd_hooks_corrupted,
+            )
+            if self.config.objective == "clean_logit":
+                corr_grads = {name: None for name in captured_corrupted.keys()}
+            else:
+                if target_token_id is not None:
+                    corr_target = corrupted_logits[0, pos_idx, target_token_id]
+                else:
+                    corr_target = corrupted_logits[0, pos_idx].max()
+                self.model.zero_grad()
+                corr_target.backward()
+                corr_grads = {
+                    name: (act.grad.clone() if act.grad is not None else None)
+                    for name, act in captured_corrupted.items()
+                }
 
         # Compute relevance scores with configurable scoring formula.
         formula = self.config.scoring_formula
+        if formula not in self.SUPPORTED_SCORING_FORMULAS:
+            raise ValueError(f"Unknown scoring formula: {formula}")
+        if self.config.objective not in self.SUPPORTED_OBJECTIVES:
+            raise ValueError(f"Unknown objective: {self.config.objective}")
         alpha = float(max(0.0, min(1.0, self.config.blend_alpha)))
 
         for name in captured_clean.keys():
@@ -257,12 +282,14 @@ class ReIPPipeline:
             corr_act = captured_corrupted.get(name)
             if corr_act is None:
                 continue
-            clean_grad = clean_act.grad
-            corr_grad = corr_act.grad
-            if clean_grad is None or corr_grad is None:
-                continue
+            clean_grad = clean_grads.get(name)
+            corr_grad = corr_grads.get(name)
 
             act_delta = clean_act.detach() - corr_act.detach()
+            if clean_grad is None:
+                clean_grad = torch.zeros_like(act_delta)
+            if corr_grad is None:
+                corr_grad = torch.zeros_like(act_delta)
 
             if formula == "corr_grad_x_act_delta":
                 relevance_scores[name] = corr_grad * act_delta
@@ -275,9 +302,6 @@ class ReIPPipeline:
             elif formula == "balanced_grad_x_act_delta":
                 grad_mix = alpha * clean_grad + (1.0 - alpha) * corr_grad
                 relevance_scores[name] = grad_mix * act_delta
-            else:
-                raise ValueError(f"Unknown scoring formula: {formula}")
-
         if self.config.verbose:
             print(f"[ReIPPipeline] Backward pass complete. "
                   f"Captured {len(relevance_scores)} relevance tensors.")
@@ -321,11 +345,7 @@ class ReIPPipeline:
                 "target_token_id": target_token_id,
                 "scoring_formula": self.config.scoring_formula,
                 "blend_alpha": alpha,
-                "objective": (
-                    "negative_logprob_gap_with_activation_delta"
-                    if target_token_id is not None
-                    else "negative_clean_max_logit"
-                ),
+                "objective": self.config.objective,
                 "lrp_rules": self.hook_manager.rules,
                 "pruning_threshold": self.config.pruning_threshold,
             },

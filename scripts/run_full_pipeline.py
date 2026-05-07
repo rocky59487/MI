@@ -67,9 +67,8 @@ def run_reip_stage(
     Run ReIP analysis on GPT-2 small for the IOI task and extract the
     Top-K most important computational nodes.
 
-    The scoring formula used is `corr_grad_x_act_delta` (Attribution Patching),
-    which achieves the highest Spearman correlation (0.86) with ground-truth
-    activation patching scores based on our ablation study.
+    The scoring formula defaults to `balanced_grad_x_act_delta` for consistency
+    with the fidelity benchmark pipeline.
 
     Args:
         model: TransformerLens HookedTransformer instance.
@@ -86,7 +85,7 @@ def run_reip_stage(
         print("=" * 70)
         print(f"  Model:           {MODEL_NAME}")
         print(f"  Task:            IOI (Indirect Object Identification)")
-        print(f"  Scoring formula: corr_grad_x_act_delta")
+        print(f"  Scoring formula: balanced_grad_x_act_delta")
         print(f"  Top-K:           {top_k}")
         print()
 
@@ -99,6 +98,9 @@ def run_reip_stage(
         device=device,
         verbose=False,
         reset_hooks_end=True,
+        scoring_formula="balanced_grad_x_act_delta",
+        blend_alpha=0.5,
+        objective="logit_gap",
     )
 
     pipeline = ReIPPipeline(model, config)
