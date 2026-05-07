@@ -37,6 +37,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import torch
 
+DEFAULT_SCORING_FORMULA = "balanced_grad_x_act_delta"
+
 
 @dataclass
 class FidelityResult:
@@ -66,7 +68,7 @@ class FidelityResult:
     top_k_overlaps: Dict[int, float] = field(default_factory=dict)
     reip_runtime_s: float = 0.0
     ap_runtime_s: float = 0.0
-    scoring_formula: str = "grad_delta_x_act_delta"
+    scoring_formula: str = DEFAULT_SCORING_FORMULA
 
     def compute_metrics(self) -> None:
         """Compute all correlation metrics from score vectors."""
@@ -170,7 +172,8 @@ def compute_reip_scores(
     target_token_idx: int,
     target_token_id: int,
     hook_points: List[str],
-    scoring_formula: str = "corr_grad_x_act_delta",
+    scoring_formula: str = DEFAULT_SCORING_FORMULA,
+    blend_alpha: float = 0.5,
 ) -> Tuple[np.ndarray, float]:
     """
     Compute ReIP attribution scores using the specified scoring formula.
@@ -180,6 +183,7 @@ def compute_reip_scores(
         - "corr_grad_x_act_delta": grad_corrupted * (act_clean - act_corrupted)
         - "clean_grad_x_act_delta": grad_clean * (act_clean - act_corrupted)
         - "half_sum_x_act_delta": 0.5 * (grad_clean + grad_corrupted) * (act_clean - act_corrupted)
+        - "balanced_grad_x_act_delta": alpha*grad_clean + (1-alpha)*grad_corrupted, alpha=0.5 by default
 
     Args:
         model: TransformerLens HookedTransformer instance.
@@ -189,6 +193,7 @@ def compute_reip_scores(
         target_token_id: Token ID of the target token.
         hook_points: List of hook point names to score.
         scoring_formula: Which formula to use for scoring.
+        blend_alpha: Clean/corrupted gradient blend weight for balanced formula.
 
     Returns:
         Tuple of (scores array, runtime in seconds).
@@ -255,6 +260,10 @@ def compute_reip_scores(
         elif scoring_formula == "half_sum_x_act_delta":
             grad_avg = 0.5 * (grad_clean + grad_corrupted)
             score_tensor = (grad_avg * act_delta).sum()
+        elif scoring_formula == "balanced_grad_x_act_delta":
+            blend_alpha = float(np.clip(blend_alpha, 0.0, 1.0))
+            grad_mix = blend_alpha * grad_clean + (1.0 - blend_alpha) * grad_corrupted
+            score_tensor = (grad_mix * act_delta).sum()
         else:
             raise ValueError(f"Unknown scoring formula: {scoring_formula}")
 
@@ -269,7 +278,7 @@ def run_fidelity_benchmark(
     clean_prompt: str,
     corrupted_prompt: str,
     target_token: str,
-    scoring_formula: str = "corr_grad_x_act_delta",
+    scoring_formula: str = DEFAULT_SCORING_FORMULA,
     model_name: str = "unknown",
     task_name: str = "IOI",
 ) -> FidelityResult:
@@ -436,6 +445,28 @@ class TestFidelityBenchmarkInfrastructure(unittest.TestCase):
         )
         # Should not raise
         result.compute_metrics()
+
+
+def calibrate_blend_alpha(
+    ap_scores: np.ndarray,
+    clean_grad_scores: np.ndarray,
+    corr_grad_scores: np.ndarray,
+    grid_size: int = 21,
+) -> float:
+    """Return alpha in [0,1] maximizing Pearson correlation to AP scores."""
+    from scipy.stats import pearsonr
+
+    best_alpha = 0.5
+    best_pcc = -np.inf
+    for alpha in np.linspace(0.0, 1.0, grid_size):
+        blended = alpha * clean_grad_scores + (1.0 - alpha) * corr_grad_scores
+        pcc, _ = pearsonr(blended, ap_scores)
+        if np.isnan(pcc):
+            continue
+        if pcc > best_pcc:
+            best_pcc = pcc
+            best_alpha = float(alpha)
+    return best_alpha
 
 
 if __name__ == "__main__":

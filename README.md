@@ -12,7 +12,7 @@
 
 | 模組 | 功能 | 計算複雜度 |
 |------|------|-----------|
-| **ReIP** | LRP/梯度-激活差分（已驗證：Preliminary results on GPT-2 small (IOI task): Spearman 0.86 vs activation patching, 3.2x 加速） | O(2F + B) |
+| **ReIP** | LRP/梯度-激活差分（**preliminary**：目前結果依模型差異明顯，仍在持續校準） | O(2F + B) |
 | **WeightLens** | 無資料集、無外部 LLM 的靜態特徵語意提取 | O(V × d) |
 | **CircuitLens** | 目標特徵對局部殘差流的敏感度分析（已實作 Jacobian-based Attention head 分解） | O(N²) |
 | **Dashboard** | 拓樸圖的視覺化 UI（已透過 `scripts/run_full_pipeline.py` 串接 ReIP 與 CircuitLens） | — |
@@ -201,6 +201,18 @@ MI/
 | 9B+ 參數 | INT8/FP8 | 8-bit + KV-cache 分頁 | ~12 GB |
 
 ---
+
+## 目前結果狀態（Preliminary）
+
+- 最新基準請以 `benchmarks/fidelity_results_latest.json` / `.csv` 為準。
+- 截至 **2026-05-06** 的快照：GPT-2 在 IOI 任務的 Pearson 約 `0.44~0.52`；GPT-Neo-1.3B 約 `-0.02~0.08`。
+- 目前結論僅代表「方法可在低成本下提供近似訊號」，**不代表** 已在跨模型達成穩健高保真。
+
+### Scoring Objective（統一定義）
+
+- Fidelity benchmark 預設公式已統一為 `balanced_grad_x_act_delta`：
+  `score = (alpha * grad_clean + (1-alpha) * grad_corrupted) * (act_clean - act_corrupted)`
+- 預設 `alpha=0.5`，並提供校準介面，可在開發集對 `alpha` 做網格搜尋後固定於報告中。
 
 ## 測試
 
