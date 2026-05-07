@@ -51,6 +51,8 @@ class ReIPConfig:
     verbose: bool = False
     reset_hooks_end: bool = True
     strict_hooks: bool = False
+    scoring_formula: str = "balanced_grad_x_act_delta"
+    blend_alpha: float = 0.5
 
 
 @dataclass
@@ -246,9 +248,10 @@ class ReIPPipeline:
 
             loss.backward()
 
-        # Compute relevance scores using corr_grad_x_act_delta (Attribution Patching)
-        # Based on ablation study results, corr_grad_x_act_delta achieves the
-        # highest Spearman correlation (0.86) with ground-truth activation patching.
+        # Compute relevance scores with configurable scoring formula.
+        formula = self.config.scoring_formula
+        alpha = float(max(0.0, min(1.0, self.config.blend_alpha)))
+
         for name in captured_clean.keys():
             clean_act = captured_clean[name]
             corr_act = captured_corrupted.get(name)
@@ -258,8 +261,22 @@ class ReIPPipeline:
             corr_grad = corr_act.grad
             if clean_grad is None or corr_grad is None:
                 continue
+
             act_delta = clean_act.detach() - corr_act.detach()
-            relevance_scores[name] = corr_grad * act_delta
+
+            if formula == "corr_grad_x_act_delta":
+                relevance_scores[name] = corr_grad * act_delta
+            elif formula == "clean_grad_x_act_delta":
+                relevance_scores[name] = clean_grad * act_delta
+            elif formula == "grad_delta_x_act_delta":
+                relevance_scores[name] = (clean_grad - corr_grad) * act_delta
+            elif formula == "half_sum_x_act_delta":
+                relevance_scores[name] = 0.5 * (clean_grad + corr_grad) * act_delta
+            elif formula == "balanced_grad_x_act_delta":
+                grad_mix = alpha * clean_grad + (1.0 - alpha) * corr_grad
+                relevance_scores[name] = grad_mix * act_delta
+            else:
+                raise ValueError(f"Unknown scoring formula: {formula}")
 
         if self.config.verbose:
             print(f"[ReIPPipeline] Backward pass complete. "
@@ -302,7 +319,8 @@ class ReIPPipeline:
                 "clean_prompt": clean_prompt,
                 "corrupted_prompt": corrupted_prompt,
                 "target_token_id": target_token_id,
-                "scoring_formula": "corr_grad_x_act_delta",
+                "scoring_formula": self.config.scoring_formula,
+                "blend_alpha": alpha,
                 "objective": (
                     "negative_logprob_gap_with_activation_delta"
                     if target_token_id is not None
