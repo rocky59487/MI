@@ -72,7 +72,7 @@ def main() -> None:
                 "ap_runtime_s": float(result.ap_runtime_s),
                 "speedup": float(result.ap_runtime_s / max(result.reip_runtime_s, 1e-6)),
                 "n_components": int(result.n_components),
-                "gpu_name": torch.cuda.get_device_name(0) if args.device.startswith("cuda") and torch.cuda.is_available() else "cpu",
+                "gpu_name": torch.cuda.get_device_name(args.device) if args.device.startswith("cuda") and torch.cuda.is_available() else "cpu",
                 "timestamp": timestamp,
             }
             rows.append(row)
