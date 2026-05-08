@@ -77,6 +77,8 @@ class TestReIPPipelineInfrastructure(unittest.TestCase):
         self.assertGreater(config.pruning_threshold, 0)
         self.assertTrue(config.normalize_scores)
         self.assertTrue(config.reset_hooks_end)
+        self.assertEqual(config.scoring_formula, "balanced_grad_x_act_delta")
+        self.assertAlmostEqual(config.blend_alpha, 0.5)
 
     def test_topology_pruner_basic(self):
         """Test TopologyPruner constructs a graph from synthetic relevance scores."""

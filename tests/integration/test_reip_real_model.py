@@ -6,13 +6,20 @@ This test is optional and is skipped when heavy dependencies are unavailable.
 import pytest
 
 
+def _load_gpt2_or_skip(tl):
+    try:
+        return tl.HookedTransformer.from_pretrained("gpt2", device="cpu")
+    except Exception as exc:  # pragma: no cover - environment/network dependent
+        pytest.skip(f"Skipping integration test: unable to load gpt2 ({exc})")
+
+
 def test_reip_real_model_smoke():
     pytest.importorskip("torch")
     tl = pytest.importorskip("transformer_lens")
 
     from src.reip.pipeline import ReIPConfig, ReIPPipeline
 
-    model = tl.HookedTransformer.from_pretrained("gpt2", device="cpu")
+    model = _load_gpt2_or_skip(tl)
     config = ReIPConfig(
         model_name="gpt2",
         device="cpu",
@@ -30,7 +37,7 @@ def test_reip_real_model_smoke():
 
     assert isinstance(result.relevance_scores, dict)
     assert len(result.relevance_scores) > 0
-    assert result.metadata["objective"] == "negative_logprob_gap_with_activation_delta"
+    assert result.metadata["objective"] == "logit_gap"
     assert result.clean_logits.shape == result.corrupted_logits.shape
 
 
@@ -38,7 +45,7 @@ def test_mini_activation_patching_baseline_ioi():
     pytest.importorskip("torch")
     tl = pytest.importorskip("transformer_lens")
 
-    model = tl.HookedTransformer.from_pretrained("gpt2", device="cpu")
+    model = _load_gpt2_or_skip(tl)
 
     clean_prompt = "When John and Mary went shopping, John gave a gift to"
     corr_prompt = "When John and Mary went shopping, Mary gave a gift to"
